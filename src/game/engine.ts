@@ -82,6 +82,7 @@ export class Game {
   running = false;
   finished = false;
   moving = false;
+  armed = false; // held at the start line during the countdown
   runMs = 0;
   style = 0;
   coins = 0;
@@ -201,6 +202,13 @@ export class Game {
   pressRot(dir: -1 | 1) { this.input.rot = dir; }
   releaseRot(dir: -1 | 1) { if (this.input.rot === dir) this.input.rot = 0; }
 
+  // Haptics — a no-op on devices without a vibration motor (most desktops).
+  private buzz(pattern: number | number[]) {
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+      navigator.vibrate(pattern);
+    }
+  }
+
   private loop = (now: number) => {
     if (!this.running) return;
     this.raf = requestAnimationFrame(this.loop);
@@ -217,6 +225,9 @@ export class Game {
 
   private tick(dt: number) {
     if (this.finished) return;
+    // Frozen at the start line until the countdown releases the rider; still
+    // ease the camera into frame so the hold doesn't look static.
+    if (this.armed) { this.updateCamera(dt); this.pushHud(false); return; }
     if (this.replay) {
       this.driveReplay(dt);
       this.updateCamera(dt);
@@ -300,6 +311,7 @@ export class Game {
       this.state.vy *= 0.2;
       this.state.heading = slope;
       this.syncRider();
+      this.buzz([22, 30, 22]); // wipeout
       return;
     }
 
@@ -317,6 +329,7 @@ export class Game {
       this.mult += trick.multAdd;
       this.opts.onTrick({ name: trick.name, points: pts, mult: this.mult });
       if (pts > this.bestTrickScore) { this.bestTrickScore = pts; this.bestTrick = trick; }
+      this.buzz(18); // landed trick
     }
     this.state.heading = slope;
   }
@@ -338,6 +351,7 @@ export class Game {
         c.taken = true;
         this.coins++;
         this.style += 250;
+        this.buzz(12); // coin
       }
     }
   }
