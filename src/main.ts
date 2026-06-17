@@ -277,26 +277,32 @@ function gameScreen(data: SeriesData, isDaily: boolean, ghost: GhostFrame[] | nu
 }
 
 // On-screen d-pad for touch devices. Each button holds while pressed and feeds
-// the same input the keyboard does. Pointer capture keeps a held button active
-// even if the finger drifts off it, and supports two-thumb multitouch.
+// the same input the keyboard does. Releases are tracked per-pointer at the
+// window level, so any number of buttons can be held at once (true multitouch —
+// e.g. accelerate + tilt together) and a finger that slides off still releases.
+let detachTouch: (() => void) | null = null;
 function wireTouchControls(screen: HTMLElement, game: Game) {
+  detachTouch?.(); // drop listeners from a previous game before wiring this one
+  const held = new Map<number, () => void>(); // pointerId -> release fn
   const bind = (id: string, on: () => void, off: () => void) => {
     const el = screen.querySelector<HTMLElement>("#" + id);
     if (!el) return;
-    const press = (e: PointerEvent) => {
+    el.addEventListener("pointerdown", (e) => {
       e.preventDefault();
-      el.setPointerCapture?.(e.pointerId);
       el.classList.add("active");
       on();
-    };
-    const release = (e: PointerEvent) => {
-      e.preventDefault();
-      el.classList.remove("active");
-      off();
-    };
-    el.addEventListener("pointerdown", press);
-    el.addEventListener("pointerup", release);
-    el.addEventListener("pointercancel", release);
+      held.set(e.pointerId, () => { el.classList.remove("active"); off(); });
+    });
+  };
+  const lift = (e: PointerEvent) => {
+    const off = held.get(e.pointerId);
+    if (off) { off(); held.delete(e.pointerId); }
+  };
+  window.addEventListener("pointerup", lift);
+  window.addEventListener("pointercancel", lift);
+  detachTouch = () => {
+    window.removeEventListener("pointerup", lift);
+    window.removeEventListener("pointercancel", lift);
   };
   bind("c-up", () => game.setHold(true), () => game.setHold(false));
   bind("c-down", () => game.setBrake(true), () => game.setBrake(false));
@@ -339,8 +345,9 @@ function resultsScreen(r: RunResult, data: SeriesData, isDaily: boolean) {
             <div class="foot"><span style="color:var(--muted)">@${user?.name ?? "guest"}</span><span style="color:var(--up);font-weight:600" id="rank"></span></div>
           </div>
         </div>
-        <div style="display:flex;gap:10px;margin-top:22px">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:22px">
           <button class="btn btn-light" id="share" style="font-size:15px;padding:12px 22px">Share run</button>
+          <button class="btn btn-ghost" id="img" style="font-size:15px;padding:12px 20px">Download image</button>
           <button class="btn btn-ghost" id="gif" style="font-size:15px;padding:12px 20px">Download GIF</button>
         </div>
       </div>
@@ -369,6 +376,14 @@ function resultsScreen(r: RunResult, data: SeriesData, isDaily: boolean) {
       await navigator.clipboard.writeText(full).catch(() => {});
       snack(`${data.name} · ${r.timeMs ? fmtTime(r.timeMs).slice(0, 8) : "DNF"} — link copied: ${full}`);
     } catch (e: any) { snack(e.message || "Share failed"); }
+  });
+  screen.querySelector("#img")!.addEventListener("click", async () => {
+    snack("Rendering image…");
+    try {
+      const { downloadRunImage } = await import("./game/gif");
+      await downloadRunImage(data, r.path, r.timeMs);
+      snack("Image downloaded.");
+    } catch (e: any) { snack(e.message || "Image failed"); }
   });
   screen.querySelector("#gif")!.addEventListener("click", async () => {
     snack("Rendering GIF…");

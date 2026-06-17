@@ -64,6 +64,53 @@ export async function downloadRunGif(data: SeriesData, path: GhostFrame[], timeM
   g.destroy();
 }
 
+// Renders a single still of the run (the rider's highest point — the most
+// dramatic frame) to a high-res PNG and triggers a download.
+export async function downloadRunImage(data: SeriesData, path: GhostFrame[], timeMs: number | null) {
+  if (!path || path.length < 2) throw new Error("Run too short to capture.");
+
+  const IW = 1200;
+  const IH = 675;
+  const cap = document.createElement("canvas");
+  cap.width = IW;
+  cap.height = IH;
+  const ctx = cap.getContext("2d")!;
+  const g = new Game(cap);
+  g.setupForCapture(data, path);
+
+  // smallest y = highest the rider got (y grows downward)
+  let peak = 0;
+  for (let i = 1; i < path.length; i++) if (path[i].y < path[peak].y) peak = i;
+  g.seek(peak / (path.length - 1));
+
+  const caption = `${data.symbol} · ${fmt(timeMs)}`;
+  ctx.save();
+  ctx.font = "600 34px 'Space Grotesk', sans-serif";
+  const tw = ctx.measureText(caption).width;
+  ctx.fillStyle = "rgba(13,15,19,0.55)";
+  roundRect(ctx, 28, 28, tw + 52, 64, 16);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.textBaseline = "middle";
+  ctx.fillText(caption, 54, 62);
+  ctx.fillStyle = "#16c66a";
+  ctx.font = "700 30px 'Space Grotesk', sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText("BullRun", IW - 40, 60);
+  ctx.restore();
+
+  const blob: Blob = await new Promise((res, rej) =>
+    cap.toBlob((b) => (b ? res(b) : rej(new Error("encode failed"))), "image/png")
+  );
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `bullrun-${data.symbol}.png`;
+  a.click();
+  URL.revokeObjectURL(url);
+  g.destroy();
+}
+
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
