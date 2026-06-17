@@ -28,6 +28,7 @@ body {
   overflow: hidden;
 }
 #app { height: 100vh; }
+@supports (height: 100dvh) { #app { height: 100dvh; } }
 ::selection { background: var(--up); color: var(--on-green); }
 button { font-family: var(--grotesk); cursor: pointer; }
 .mono { font-family: var(--mono); }
@@ -91,8 +92,26 @@ button { font-family: var(--grotesk); cursor: pointer; }
 
 /* ---------- game / HUD ---------- */
 .game-screen { position: absolute; inset: 0; }
+/* Desktop: the stage fills the screen and the touch pad is hidden. On touch
+   layouts (see media query) the stage becomes a rectangle on top and the
+   control pad sits below it on black. */
+.game-stage { position: absolute; inset: 0; overflow: hidden; }
 #game-canvas { width: 100%; height: 100%; display: block; }
 .hud { position: absolute; inset: 0; pointer-events: none; }
+
+/* on-screen d-pad (touch only) */
+.game-controls { display: none; }
+.ctl-cluster { display: flex; gap: 18px; }
+.ctl-throttle { flex-direction: column; }
+.ctl-btn {
+  -webkit-tap-highlight-color: transparent; touch-action: none; user-select: none; -webkit-user-select: none;
+  width: clamp(64px, 20vw, 92px); height: clamp(64px, 20vw, 92px); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: clamp(26px, 7vw, 34px); line-height: 1; color: #fff;
+  background: rgba(255, 255, 255, 0.08); border: 1.5px solid rgba(255, 255, 255, 0.28);
+  pointer-events: auto;
+}
+.ctl-btn.active { background: var(--up); color: var(--on-green); border-color: var(--up); box-shadow: 0 0 24px -4px rgba(22, 198, 106, 0.7); }
 .hud .glass { background: rgba(13,15,19,0.4); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.18); border-radius: 14px; }
 .hud-tl { position: absolute; top: 22px; left: 24px; padding: 14px 18px; }
 .hud-tl .t1 { display: flex; align-items: center; gap: 10px; }
@@ -186,3 +205,85 @@ button { font-family: var(--grotesk); cursor: pointer; }
 .modal .swap { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 14px; cursor: pointer; }
 .toast-host { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; flex-direction: column; gap: 8px; }
 .snack { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; font-size: 13px; }
+
+/* ============================================================
+   Responsive — tablet & mobile (<= 1024px)
+   Game: rectangular stage on top, touch d-pad below on black.
+   All other screens reflow to a single column.
+   ============================================================ */
+@media (max-width: 1024px) {
+  @supports (height: 100dvh) { .screen { height: 100dvh; } }
+
+  /* ----- game: stage on top, controls below ----- */
+  .game-screen { display: flex; flex-direction: column; background: #000; }
+  .game-stage { position: relative; inset: auto; flex: 1 1 auto; min-height: 0; }
+  .game-controls {
+    display: flex; align-items: center; justify-content: space-between;
+    flex: 0 0 auto; height: clamp(170px, 32vh, 300px);
+    padding: 16px clamp(16px, 6vw, 52px) calc(16px + env(safe-area-inset-bottom));
+    background: #000; border-top: 1px solid rgba(255, 255, 255, 0.1);
+    touch-action: none;
+  }
+
+  /* HUD scaled down for the smaller stage */
+  .hud-tl { top: 12px; left: 12px; padding: 9px 12px; }
+  .hud-tl .price { font-size: 22px; }
+  .hud-tl .sym { font-size: 15px; }
+  .hud-tr { top: 12px; right: 12px; gap: 8px; }
+  .hud-tr .timer { font-size: 19px; }
+  .hud-tr .glass { padding: 7px 11px !important; }
+  .hud-pause { width: 38px; height: 38px; }
+  .hud-meters { left: 12px; gap: 9px; }
+  .meter { width: 104px; padding: 9px 11px; }
+  .hud-combo { bottom: 16px; padding: 7px 14px; gap: 8px; }
+  .hud-combo .v { font-size: 18px; }
+  .hud-combo .m { font-size: 16px; }
+  .toasts { right: 12px; gap: 9px; }
+  .toast { padding: 9px 14px; gap: 8px; }
+  .toast .nm { font-size: 16px; }
+  .toast .pt { font-size: 12px; }
+  .toast .mx { font-size: 14px; }
+
+  /* ----- start / search ----- */
+  .nav { padding: 16px 18px; }
+  .logo { font-size: 20px; }
+  .nav-right { gap: 10px; }
+  .start-sun { width: 130px; height: 130px; right: 8%; }
+  .search-wrap { width: min(560px, 92%); top: 42%; }
+  .search-row { flex-direction: column; gap: 10px; }
+  .search-box { padding: 13px 16px; }
+  .search-box input { font-size: 18px; }
+  .search-row .btn-primary { width: 100%; justify-content: center; }
+  .daily-strip { flex-wrap: wrap; justify-content: center; gap: 8px; }
+
+  /* ----- results ----- */
+  .results { flex-direction: column; overflow: auto; }
+  .results-main { flex: none; padding: 28px 22px 18px; }
+  .results h3 { font-size: 32px; margin: 8px 0 20px; }
+  .stat-grid { max-width: none; gap: 12px; }
+  .results-share { flex: none; border-left: none; border-top: 1px solid rgba(255, 255, 255, 0.08); padding: 24px; }
+
+  /* ----- leaderboard ----- */
+  .lb-panel { width: 94%; }
+  .lb-head { padding: 16px 18px; }
+  .lb-tabs { padding: 12px 18px 0; gap: 18px; }
+  .lb-rows { padding: 6px 8px 10px; max-height: 52vh; }
+  .lb-rowhead, .lb-row { grid-template-columns: 30px 1fr 80px 62px; gap: 8px; padding: 10px 8px; }
+  .lb-row .val { font-size: 13px; }
+  .lb-row .date { font-size: 11px; }
+  .lb-foot { flex-direction: column; align-items: stretch; gap: 12px; padding: 14px 18px; }
+  .lb-foot > div { justify-content: space-between; }
+
+  /* ----- modal ----- */
+  .modal { width: min(360px, 92vw); padding: 22px; }
+}
+
+/* ----- phones (<= 560px): tighten further ----- */
+@media (max-width: 560px) {
+  .stat-grid { grid-template-columns: 1fr 1fr; }
+  .results-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .hud-meters { display: none; } /* free up space on the smallest stages */
+  .lb-rowhead, .lb-row { grid-template-columns: 26px 1fr 70px; }
+  .lb-rowhead span:last-child, .lb-row .date { display: none; }
+  .ctl-cluster { gap: 14px; }
+}

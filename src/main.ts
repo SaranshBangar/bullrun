@@ -197,26 +197,40 @@ async function loadAndPlay(symbol: string, isDaily: boolean, replay?: GhostFrame
 
 // ---------- game ----------
 function gameScreen(data: SeriesData, isDaily: boolean, ghost: GhostFrame[] | null, replay?: GhostFrame[]) {
+  const controls = replay ? "" : `
+      <div class="game-controls">
+        <div class="ctl-cluster ctl-dir">
+          <button class="ctl-btn" id="c-left" aria-label="Tilt left">◄</button>
+          <button class="ctl-btn" id="c-right" aria-label="Tilt right">►</button>
+        </div>
+        <div class="ctl-cluster ctl-throttle">
+          <button class="ctl-btn" id="c-up" aria-label="Speed up">▲</button>
+          <button class="ctl-btn" id="c-down" aria-label="Brake">▼</button>
+        </div>
+      </div>`;
   const screen = h(`
     <div class="game-screen">
-      <canvas id="game-canvas"></canvas>
-      <div class="hud">
-        <div class="glass hud-tl">
-          <div class="t1"><span class="sym">${data.symbol}</span><span class="ex">NASDAQ</span></div>
-          <div style="display:flex;align-items:baseline;gap:10px;margin-top:4px"><span class="price" id="price">$0.00</span><span id="pctpill"></span></div>
+      <div class="game-stage">
+        <canvas id="game-canvas"></canvas>
+        <div class="hud">
+          <div class="glass hud-tl">
+            <div class="t1"><span class="sym">${data.symbol}</span><span class="ex">NASDAQ</span></div>
+            <div style="display:flex;align-items:baseline;gap:10px;margin-top:4px"><span class="price" id="price">$0.00</span><span id="pctpill"></span></div>
+          </div>
+          <div class="hud-tr">
+            <div class="glass" style="padding:10px 16px;text-align:right"><div class="timer" id="timer">00:00.000</div></div>
+            <button class="hud-pause" id="pause">❚❚</button>
+          </div>
+          <div class="hud-meters">
+            <div class="glass meter"><div class="lbl">Speed</div><div class="bar"><div class="fill" id="speed" style="width:0%;background:#16c66a"></div></div></div>
+            <div class="glass meter"><div class="lbl">Airtime</div><div class="bar"><div class="fill" id="air" style="width:0%;background:#f8c96b"></div></div></div>
+          </div>
+          <div class="glass hud-combo"><span class="k">Combo</span><span class="v" id="style">0</span><span class="m" id="mult">×1.0</span></div>
+          <div class="toasts" id="toasts"></div>
+          <div class="pause-veil" id="veil" style="display:none">Paused · P to resume</div>
         </div>
-        <div class="hud-tr">
-          <div class="glass" style="padding:10px 16px;text-align:right"><div class="timer" id="timer">00:00.000</div></div>
-          <button class="hud-pause" id="pause">❚❚</button>
-        </div>
-        <div class="hud-meters">
-          <div class="glass meter"><div class="lbl">Speed</div><div class="bar"><div class="fill" id="speed" style="width:0%;background:#16c66a"></div></div></div>
-          <div class="glass meter"><div class="lbl">Airtime</div><div class="bar"><div class="fill" id="air" style="width:0%;background:#f8c96b"></div></div></div>
-        </div>
-        <div class="glass hud-combo"><span class="k">Combo</span><span class="v" id="style">0</span><span class="m" id="mult">×1.0</span></div>
-        <div class="toasts" id="toasts"></div>
-        <div class="pause-veil" id="veil" style="display:none">Paused · P to resume</div>
       </div>
+      ${controls}
     </div>`);
   app.replaceChildren(screen);
 
@@ -258,7 +272,36 @@ function gameScreen(data: SeriesData, isDaily: boolean, ghost: GhostFrame[] | nu
     screen.querySelector(".hud")!.appendChild(back);
   } else {
     $("pause").addEventListener("click", () => game.togglePause());
+    wireTouchControls(screen, game);
   }
+}
+
+// On-screen d-pad for touch devices. Each button holds while pressed and feeds
+// the same input the keyboard does. Pointer capture keeps a held button active
+// even if the finger drifts off it, and supports two-thumb multitouch.
+function wireTouchControls(screen: HTMLElement, game: Game) {
+  const bind = (id: string, on: () => void, off: () => void) => {
+    const el = screen.querySelector<HTMLElement>("#" + id);
+    if (!el) return;
+    const press = (e: PointerEvent) => {
+      e.preventDefault();
+      el.setPointerCapture?.(e.pointerId);
+      el.classList.add("active");
+      on();
+    };
+    const release = (e: PointerEvent) => {
+      e.preventDefault();
+      el.classList.remove("active");
+      off();
+    };
+    el.addEventListener("pointerdown", press);
+    el.addEventListener("pointerup", release);
+    el.addEventListener("pointercancel", release);
+  };
+  bind("c-up", () => game.setHold(true), () => game.setHold(false));
+  bind("c-down", () => game.setBrake(true), () => game.setBrake(false));
+  bind("c-left", () => game.pressRot(-1), () => game.releaseRot(-1));
+  bind("c-right", () => game.pressRot(1), () => game.releaseRot(1));
 }
 
 // ---------- results + share ----------
