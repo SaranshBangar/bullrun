@@ -1,0 +1,12 @@
+# Copy to .dev.vars for local `vite dev` / `wrangler dev`. All optional — the
+# game runs on deterministic synthetic data when no provider key is set.
+
+# Stock data providers (server-side only, never shipped to the browser)
+TWELVE_DATA_KEY=
+ALPHA_VANTAGE_KEY=
+
+# Better Auth
+AUTH_SECRET=dev-secret-change-me
+# Optional Google sign-in
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
