@@ -1,5 +1,5 @@
 import { createAuthClient } from "better-auth/client";
-import { sentinelClient } from "@better-auth/infra/client";
+import { dashClient, sentinelClient } from "@better-auth/infra/client";
 import type { SeriesData, GhostFrame, RunResult } from "./game/engine";
 import type { Sector } from "./shared/series";
 
@@ -12,7 +12,9 @@ const j = async (r: Response): Promise<any> => {
 };
 
 export const authClient = createAuthClient({
-  plugins: [sentinelClient()],
+  // `as any`: infra's client plugin types and better-auth 1.6's client typings
+  // disagree across the version boundary; the plugin objects are valid at runtime.
+  plugins: [dashClient(), sentinelClient()] as any,
 });
 
 export interface Symbol {

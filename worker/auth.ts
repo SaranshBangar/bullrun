@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { dash } from "@better-auth/infra";
+import { dash, sentinel } from "@better-auth/infra";
 import { D1Dialect } from "kysely-d1";
 import type { Env } from "./index";
 
@@ -20,7 +20,14 @@ export function makeAuth(env: Env) {
           },
         }
       : undefined,
-    plugins: [dash()],
+    // Better Auth Infra: dash (admin dashboard + analytics) and sentinel (bot /
+    // abuse protection). Both are backed by the Infra cloud API — pass the key
+    // when set; without it they degrade gracefully (sentinel → allow mode) and
+    // never block sign-in. The CLI confirms neither adds local D1 tables.
+    plugins: [
+      dash(env.BETTER_AUTH_API_KEY ? { apiKey: env.BETTER_AUTH_API_KEY } : undefined),
+      sentinel(env.BETTER_AUTH_API_KEY ? { apiKey: env.BETTER_AUTH_API_KEY } : undefined),
+    ],
   });
 }
 

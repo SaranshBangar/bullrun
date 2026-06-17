@@ -14,6 +14,7 @@ export interface Env {
   KV: KVNamespace;
   BASE_URL: string;
   AUTH_SECRET?: string;
+  BETTER_AUTH_API_KEY?: string;
   TWELVE_DATA_KEY?: string;
   ALPHA_VANTAGE_KEY?: string;
   GOOGLE_CLIENT_ID?: string;

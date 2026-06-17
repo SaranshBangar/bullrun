@@ -37,7 +37,7 @@ export interface StepEvent {
 export const P = {
   G: 2200, // gravity px/s^2
   RIDE_H: 16, // board contact sits this far above the surface line
-  PUMP_BASE: 1100, // pump accel on the flat (enough to climb gentle hills)
+  PUMP_BASE: 1300, // pump accel on the flat (climbs slopes up to ~36°)
   PUMP_DOWN: 2400, // extra pump accel scaled by how steep the downslope is
   BRAKE: 3200,
   DRAG_GROUND: 1.4, // /s exponential speed bleed when upright

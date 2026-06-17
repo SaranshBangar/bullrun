@@ -35,27 +35,39 @@ assert(sentiment([{ date: "x", close: 100 }, { date: "y", close: 80 }]).up === f
 // daily ticker deterministic per day
 assert(dailyTicker("2026-06-17") === dailyTicker("2026-06-17"), "daily stable");
 
-// physics: rider stays glued to the surface (no jitter), moves forward, and
-// completes launch+land cycles over rolling hills without going non-finite.
+// physics A: over rolling hills the rider stays glued to the surface (no
+// jitter), stays finite, and carries forward under pump from a drop-in start.
 const surf = {
   heightAt: (x: number) => 400 - 120 * Math.sin(x / 180),
-  slopeAt: (x: number) =>
-    Math.atan2(surf.heightAt(x + 6) - surf.heightAt(x - 6), 12),
+  slopeAt: (x: number) => Math.atan2(surf.heightAt(x + 6) - surf.heightAt(x - 6), 12),
 };
-const r: Rider = { x: 0, y: surf.heightAt(0) - P.RIDE_H, vx: 0, vy: 0, heading: surf.slopeAt(0), grounded: true };
-let launched = false, landed = false, maxGlueErr = 0;
+const r: Rider = { x: 0, y: surf.heightAt(0) - P.RIDE_H, vx: 600, vy: 0, heading: surf.slopeAt(0), grounded: true };
+let maxGlueErr = 0;
 for (let i = 0; i < 3000; i++) {
-  const ev = step(r, 1 / 60, surf, { hold: true, brake: false, rot: 0 });
+  step(r, 1 / 60, surf, { hold: true, brake: false, rot: 0 });
   assert(Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.vx) && Number.isFinite(r.vy), "finite state");
-  if (ev.launched) launched = true;
-  if (ev.landed) landed = true;
   if (r.grounded) maxGlueErr = Math.max(maxGlueErr, Math.abs(r.y - (surf.heightAt(r.x) - P.RIDE_H)));
 }
-assert(r.x > 500, "rider travels forward under pump");
+assert(r.x > 1000, "rider travels forward under pump");
 assert(maxGlueErr < 1.0, "grounded rider stays glued to the surface (no jitter)");
-assert(launched && landed, "launches off peaks and lands");
 
-// brake scrubs speed
+// physics B: a cliff edge launches the rider, who then lands cleanly below.
+const cliff = {
+  heightAt: (x: number) => (x < 500 ? 16 : 16 + (x - 500) * 0.8),
+  slopeAt: (x: number) => Math.atan2(cliff.heightAt(x + 6) - cliff.heightAt(x - 6), 12),
+};
+const rc: Rider = { x: 400, y: 0, vx: 900, vy: 0, heading: 0, grounded: true };
+let launched = false, landed = false;
+for (let i = 0; i < 600; i++) {
+  const ev = step(rc, 1 / 60, cliff, { hold: false, brake: false, rot: 0 });
+  if (ev.launched) launched = true;
+  if (ev.landed) landed = true;
+  assert(Number.isFinite(rc.y), "cliff finite");
+}
+assert(launched, "launches off a cliff edge");
+assert(landed, "lands after the launch");
+
+// physics C: brake scrubs speed
 const r2: Rider = { x: 0, y: 0, vx: 800, vy: 0, heading: 0, grounded: true };
 const flat = { heightAt: () => 16, slopeAt: () => 0 };
 for (let i = 0; i < 30; i++) step(r2, 1 / 60, flat, { hold: false, brake: true, rot: 0 });

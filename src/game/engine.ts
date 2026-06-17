@@ -125,7 +125,7 @@ export class Game {
     this.state = {
       x: t.startX,
       y: t.heightAt(t.startX) - P.RIDE_H,
-      vx: 0,
+      vx: 350, // drop-in: start with momentum so the run rolls even if it opens uphill
       vy: 0,
       heading: t.slopeAt(t.startX),
       grounded: true,

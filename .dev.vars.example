@@ -10,3 +10,6 @@ AUTH_SECRET=dev-secret-change-me
 # Optional Google sign-in
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
+# Optional Better Auth Infra cloud key (powers the dash dashboard + sentinel
+# security checks). Without it both degrade gracefully and never block sign-in.
+BETTER_AUTH_API_KEY=

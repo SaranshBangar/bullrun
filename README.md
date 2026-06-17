@@ -5,9 +5,10 @@ stick-man rides on a snowboard, left → right through time. Pump the dips, laun
 the peaks, land the trick. Best **time** and **style** per ticker go on global
 leaderboards.
 
-TypeScript + Vite + HTML5 Canvas + Matter.js on the frontend; a single
-Cloudflare Worker (D1 + KV, Better Auth) on the back. **It runs with zero
-config** — no API key required — on deterministic synthetic prices.
+TypeScript + Vite + HTML5 Canvas on the frontend with a custom analytic
+heightmap rider (the Tiny-Wings / Alto's model); a single Cloudflare Worker
+(D1 + KV, Better Auth) on the back. **It runs with zero config** — no API key
+required — on deterministic synthetic prices.
 
 ## Quick start
 
@@ -60,22 +61,34 @@ src/
     series.ts          synthetic prices, sector palettes, ticker universe, sentiment
     spline.ts          Catmull-Rom resampling
   game/
-    engine.ts        Matter.js world, game loop, controls, scoring, ghost record/replay
-    terrain.ts       closes -> spline -> normalized -> Matter segment terrain + features
+    physics.ts       pure heightmap rider integrator (no canvas/engine deps — unit-tested)
+    engine.ts        game loop, controls, scoring, ghost record/replay, GIF capture hooks
+    terrain.ts       closes -> spline -> normalized heightmap + features (height/slope queries)
     rider.ts         jointed stick-man skeleton + poses
     tricks.ts        finance-themed trick table + naming
     draw.ts          canvas render: sky, parallax, terrain, coins, flag, rider, ghost
+    gif.ts           replays the run path into a downloadable GIF (gifenc, lazy-loaded)
 worker/
   index.ts           API router; serves the SPA via the ASSETS binding
   stock.ts           Twelve Data -> Alpha Vantage -> synthetic, cached in KV by symbol+day
-  auth.ts            Better Auth over D1 (Kysely D1 dialect)
+  auth.ts            Better Auth over D1 (Kysely D1 dialect) + Infra dash/sentinel plugins
 migrations/0001_init.sql   Better Auth tables + scores
 ```
 
-The rider is a Matter.js **circle** body (clean rolling collision against the
-segmented terrain); the visible jointed skeleton and board heading are driven in
-JS and decoupled from the physics body, so flips/landings stay readable and
-deterministic. Terrain height/slope queries use the cached heightmap.
+### Physics
+
+The rider **surfs the smooth Catmull-Rom surface analytically** (`physics.ts`)
+rather than colliding a rigid body against terrain. Rolling a circle over a
+faceted segment chain produces jitter — every seam is a fresh micro-collision
+with residual bounce velocity (the classic internal-edge problem), which is the
+genre's known failure mode. Instead the rider is glued to the heightmap when
+grounded (velocity projected onto the slope tangent → zero bounce), goes
+ballistic only when the terrain falls away faster than gravity (launch off
+peaks/cliffs), and lands by projecting back onto the slope; a too-off landing
+angle is a wipeout. `physics.step()` is pure and frame-rate independent, so the
+node self-check (`npm run check`) exercises it directly — asserting the rider
+stays glued (no jitter), carries forward under pump, and launches + lands.
+Tuning knobs live in `physics.ts` (`P`).
 
 ## Stock data
 
@@ -109,6 +122,7 @@ npx wrangler secret put ALPHA_VANTAGE_KEY
 npx wrangler secret put AUTH_SECRET
 npx wrangler secret put GOOGLE_CLIENT_ID       # optional Google sign-in
 npx wrangler secret put GOOGLE_CLIENT_SECRET
+npx wrangler secret put BETTER_AUTH_API_KEY     # optional — powers dash + sentinel
 
 # 4. set BASE_URL in wrangler.jsonc [vars] to your deployed origin, then:
 npm run deploy
@@ -139,7 +153,11 @@ today's date and naturally resets each day; All-Time spans every run.
 
 - Ghost = recorded **path** (positions), not raw inputs — robust against
   physics non-determinism across machines. See `// ponytail:` markers in code.
-- Terrain is a chain of ~780 static Matter segments rather than one decomposed
-  body — avoids poly-decomp and is plenty fast for one rider.
+- Custom heightmap physics replaced Matter.js: rigid-body collision against a
+  faceted spline jitters (internal-edge bounce), so it was the wrong tool for a
+  Tiny-Wings-style surfer. Matter was dropped; the client bundle is ~75 KB smaller.
+- Better Auth Infra (`dash` + `sentinel`) is wired in `worker/auth.ts`. Both are
+  cloud-backed (set `BETTER_AUTH_API_KEY`); without the key they degrade
+  gracefully and never block sign-in, and they add no D1 tables.
 - Autocomplete uses a curated universe; swap in a real symbol-search proxy in
   `worker/index.ts > search()` when you want the full market.
