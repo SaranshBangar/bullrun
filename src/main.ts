@@ -68,6 +68,7 @@ async function startScreen(mode: "daily" | "free") {
       <div class="nav">
         <div class="logo">BullRun</div>
         <div class="nav-right">
+          <button class="help-btn" id="help" aria-label="How to play" title="How to play">?</button>
           <div class="toggle" id="mode">
             <span data-m="daily">Daily Challenge</span>
             <span data-m="free">Free Ride</span>
@@ -111,6 +112,7 @@ async function startScreen(mode: "daily" | "free") {
   };
 
   renderUser(screen.querySelector("#userslot")!, () => startScreen(mode));
+  screen.querySelector("#help")!.addEventListener("click", howToModal);
 
   const sky = screen.querySelector<HTMLElement>(".start-sky")!;
   const refreshPreview = (sec: Sector, closes: Close[]) => {
@@ -542,6 +544,72 @@ function signInModal(onDone: () => void) {
   };
   render();
   veil.addEventListener("click", (e) => { if (e.target === veil) veil.remove(); });
+  document.body.appendChild(veil);
+}
+
+// ---------- how to play ----------
+function howToModal() {
+  const leg = (icon: string, name: string, desc: string) =>
+    `<div class="leg-item"><div class="leg-ic">${icon}</div><div class="leg-txt"><b>${name}</b><span>${desc}</span></div></div>`;
+
+  const icLine = `<svg viewBox="0 0 40 40"><path d="M4 29 L13 19 L21 25 L36 9" fill="none" stroke="#16c66a" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const icCoin = `<svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="11" fill="none" stroke="#f6d36b" stroke-width="3"/><text x="20" y="26" text-anchor="middle" font-family="monospace" font-size="16" fill="#f6d36b">$</text></svg>`;
+  const icRamp = `<svg viewBox="0 0 40 40"><defs><radialGradient id="htRamp" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#16c66a" stop-opacity="0.85"/><stop offset="1" stop-color="#16c66a" stop-opacity="0"/></radialGradient></defs><circle cx="27" cy="16" r="14" fill="url(#htRamp)"/><path d="M4 31 L36 13" fill="none" stroke="#16c66a" stroke-width="3.5" stroke-linecap="round"/></svg>`;
+  const icCliff = `<svg viewBox="0 0 40 40"><path d="M4 11 L17 11 L17 31 L36 31" fill="none" stroke="#ef4b3c" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const icFlag = `<svg viewBox="0 0 40 40"><path d="M13 5 L13 35" stroke="#fff" stroke-width="3" stroke-linecap="round"/><path d="M13 8 L31 8 L25 14 L31 20 L13 20 Z" fill="none" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/></svg>`;
+  const icGhost = `<svg viewBox="0 0 40 40"><circle cx="20" cy="14" r="5.5" fill="#9fd9ec" opacity="0.55"/><rect x="13" y="20" width="14" height="14" rx="6" fill="#9fd9ec" opacity="0.4"/></svg>`;
+  const icYou = `<svg viewBox="0 0 40 40"><circle cx="20" cy="12" r="5.5" fill="#fff"/><rect x="14" y="18" width="12" height="12" rx="5" fill="#16c66a"/><path d="M9 33 L31 31" stroke="#f8c96b" stroke-width="3" stroke-linecap="round"/></svg>`;
+
+  const veil = h(`<div class="veil howto-veil"></div>`);
+  const panel = h(`
+    <div class="howto">
+      <button class="x" id="hclose" aria-label="Close">✕</button>
+      <div class="howto-head">
+        <div class="micro">BullRun</div>
+        <h3>How to play</h3>
+        <p>Search a ticker — six months of daily closes become a mountain. Ride it left → right: pump the dips, launch the peaks, land the trick. Your best time and style per ticker hit the global leaderboards.</p>
+      </div>
+
+      <div class="howto-sec">
+        <div class="howto-title">Controls</div>
+        <div class="howto-controls">
+          <div class="kctl"><span class="keys"><kbd>W</kbd><kbd>↑</kbd></span><span>Speed up — tuck &amp; pump down slopes; release on a peak to launch.</span></div>
+          <div class="kctl"><span class="keys"><kbd>S</kbd><kbd>↓</kbd></span><span>Brake — dig in and scrub speed.</span></div>
+          <div class="kctl"><span class="keys"><kbd>A</kbd><kbd>D</kbd> <kbd>←</kbd><kbd>→</kbd></span><span>Tilt / rotate in the air — land square or you wipe out.</span></div>
+          <div class="kctl"><span class="keys"><kbd>P</kbd><kbd>Esc</kbd></span><span>Pause.</span></div>
+          <div class="kctl"><span class="keys touch">▲ ▼ ◄ ►</span><span>On phones &amp; tablets: the on-screen pad — hold several buttons at once.</span></div>
+        </div>
+      </div>
+
+      <div class="howto-sec">
+        <div class="howto-title">Map legend</div>
+        <div class="legend">
+          ${leg(icLine, "The mountain", "Six months of closes. Green when the stock's up over the span, red when down.")}
+          ${leg(icYou, "You", "Your snowboarder — keep your speed and stay on the map.")}
+          ${leg(icCoin, "Dividend coin", "Grab it for +250 style and a coin.")}
+          ${leg(icRamp, "Earnings ramp", "A glowing boost pad — launches you skyward for big-air tricks.")}
+          ${leg(icCliff, "Overnight gap", "A sheer cliff from a price gap. Launch it, or brace for the landing.")}
+          ${leg(icFlag, "Finish line", "Reach the flag to end the run and log your time.")}
+          ${leg(icGhost, "Ghost rider", "A translucent replay of the current #1 run — race it.")}
+        </div>
+      </div>
+
+      <div class="howto-sec">
+        <div class="howto-title">Scoring</div>
+        <p class="howto-note">Tricks — Bull Flip, Short Squeeze, Diamond Hands, Dead Cat Bounce, To The Moon — raise a combo multiplier that resets when you settle or wipe out. Race for the fastest <b>time</b> and the highest <b>style</b>.</p>
+      </div>
+
+      <button class="btn btn-primary full" id="hgo">Got it — let's ride</button>
+    </div>`);
+  veil.appendChild(panel);
+
+  const close = () => veil.remove();
+  panel.querySelector("#hclose")!.addEventListener("click", close);
+  panel.querySelector("#hgo")!.addEventListener("click", close);
+  veil.addEventListener("click", (e) => { if (e.target === veil) close(); });
+  document.addEventListener("keydown", function esc(e) {
+    if (e.key === "Escape") { close(); document.removeEventListener("keydown", esc); }
+  });
   document.body.appendChild(veil);
 }
 
