@@ -1,4 +1,5 @@
 import { createAuthClient } from "better-auth/client";
+import { sentinelClient } from "@better-auth/infra/client";
 import type { SeriesData, GhostFrame, RunResult } from "./game/engine";
 import type { Sector } from "./shared/series";
 
@@ -10,7 +11,9 @@ const j = async (r: Response): Promise<any> => {
   return r.json();
 };
 
-export const authClient = createAuthClient();
+export const authClient = createAuthClient({
+  plugins: [sentinelClient()],
+});
 
 export interface Symbol {
   symbol: string;

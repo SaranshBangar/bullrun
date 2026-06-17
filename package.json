@@ -13,16 +13,18 @@
     "db:remote": "wrangler d1 migrations apply bullrun --remote"
   },
   "dependencies": {
-    "better-auth": "^1.2.7",
+    "@better-auth/core": "^1.6.19",
+    "@better-auth/infra": "^0.2.14",
+    "@better-auth/sso": "^1.6.19",
+    "better-auth": "^1.6.19",
     "gifenc": "^1.0.3",
-    "kysely": "^0.27.4",
-    "kysely-d1": "^0.3.0",
-    "matter-js": "^0.20.0"
+    "kysely": "^0.28.5",
+    "kysely-d1": "^0.4.0",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.0.12",
     "@cloudflare/workers-types": "^4.20250109.0",
-    "@types/matter-js": "^0.19.7",
     "typescript": "^5.6.3",
     "vite": "^6.0.0",
     "wrangler": "^4.0.0"

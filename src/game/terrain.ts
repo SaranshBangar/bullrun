@@ -1,4 +1,3 @@
-import Matter from "matter-js";
 import { catmullRom, Pt } from "../shared/spline";
 import type { Close } from "../shared/series";
 
@@ -16,7 +15,6 @@ export interface Terrain {
   pts: Pt[];
   width: number;
   bottomY: number;
-  bodies: Matter.Body[];
   coins: Coin[];
   features: Feature[];
   startX: number;
@@ -78,30 +76,6 @@ export function buildTerrain(closes: Close[]): Terrain {
   const minY = Math.min(...pts.map((p) => p.y));
   const bottomY = BASE_Y + 240;
 
-  // Matter terrain: one thin static body per dense segment.
-  // ponytail: O(n) segment chain (~780 static bodies); swap for a single
-  // decomposed body if the broadphase ever shows up in a profile.
-  const bodies: Matter.Body[] = [];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i];
-    const b = pts[i + 1];
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const body = Matter.Bodies.rectangle((a.x + b.x) / 2, (a.y + b.y) / 2 + 6, len, 14, {
-      isStatic: true,
-      angle: Math.atan2(dy, dx),
-      friction: 0.02,
-      label: "terrain",
-    });
-    bodies.push(body);
-  }
-  // floor far below to catch chasm falls, + left wall
-  bodies.push(
-    Matter.Bodies.rectangle(width / 2, bottomY + 200, width + 4000, 80, { isStatic: true, label: "floor" })
-  );
-  bodies.push(Matter.Bodies.rectangle(-40, 0, 80, 4000, { isStatic: true, label: "wall" }));
-
   const startX = ctrl[0].x + SEG * 0.5;
   const finishX = ctrl[ctrl.length - 1].x;
 
@@ -138,7 +112,6 @@ export function buildTerrain(closes: Close[]): Terrain {
     pts,
     width,
     bottomY,
-    bodies,
     coins,
     features,
     startX,

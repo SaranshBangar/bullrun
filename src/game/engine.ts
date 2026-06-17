@@ -1,8 +1,8 @@
-import Matter from "matter-js";
 import { buildTerrain, Terrain } from "./terrain";
 import { POSES, Pose, lerpPose } from "./rider";
 import { nameTrick, Jump, TrickDef } from "./tricks";
 import { drawWorld } from "./draw";
+import { step, P, normAngle, type Rider, type Input } from "./physics";
 import type { Close, Sector } from "../shared/series";
 import { SECTOR_SKY } from "../shared/series";
 
@@ -54,33 +54,31 @@ export interface GameOpts {
   onTrick: (t: TrickToast) => void;
   onFinish: (r: RunResult) => void;
   ghost?: GhostFrame[] | null;
-  replay?: GhostFrame[] | null; // play back instead of taking input (share view)
+  replay?: GhostFrame[] | null;
 }
 
-const STEP = 1000 / 60;
+const STEP = 1000 / 60; // ms per fixed sim step
 const WIPEOUT_RAD = 0.95;
 
 export class Game {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
-  engine: Matter.Engine;
-  rider!: Matter.Body;
   terrain!: Terrain;
   data!: SeriesData;
   opts!: GameOpts;
   sky!: [string, string, string];
 
-  // camera
-  cam = { x: 0, y: 0, zoom: 1 };
-  // input: hold = speed/tuck (W / ↑ / tap), brake = slow (S / ↓), rot = tilt (A·D / ←·→)
-  input = { hold: false, brake: false, rot: 0 };
-  // rider visual
-  heading = 0;
-  pose: Pose = { ...POSES.ride };
-  grounded = true;
-  groundContacts = 0;
+  // rider: a plain analytic state. `rider.position/velocity` shadow the state so
+  // the renderer + camera read it the same way they always did.
+  state: Rider = { x: 0, y: 0, vx: 0, vy: 0, heading: 0, grounded: true };
+  rider = { position: { x: 0, y: 0 }, velocity: { x: 0, y: 0 } };
+  get heading() { return this.state.heading; }
+  set heading(v: number) { this.state.heading = v; }
 
-  // run state
+  cam = { x: 0, y: 0, zoom: 1 };
+  input: Input = { hold: false, brake: false, rot: 0 };
+  pose: Pose = { ...POSES.ride };
+
   running = false;
   finished = false;
   moving = false;
@@ -102,7 +100,6 @@ export class Game {
   maxHeight = 0;
   grabMs = 0;
   launchCtx: Jump["launch"] = "normal";
-  takeoffX = 0;
 
   ghost: GhostFrame[] | null = null;
   replay: GhostFrame[] | null = null;
@@ -114,8 +111,6 @@ export class Game {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
-    this.engine = Matter.Engine.create();
-    this.engine.gravity.y = 1.1;
   }
 
   start(data: SeriesData, opts: GameOpts) {
@@ -127,20 +122,16 @@ export class Game {
     this.terrain = buildTerrain(data.closes);
 
     const t = this.terrain;
-    this.rider = Matter.Bodies.circle(t.startX, t.heightAt(t.startX) - 40, 13, {
-      friction: 0.02,
-      frictionAir: 0.01,
-      restitution: 0,
-      label: "rider",
-      density: 0.004,
-    });
-    Matter.Composite.add(this.engine.world, [...t.bodies, this.rider]);
-
-    Matter.Events.on(this.engine, "collisionStart", (e) => this.contacts(e, 1));
-    Matter.Events.on(this.engine, "collisionEnd", (e) => this.contacts(e, -1));
-
-    this.heading = t.slopeAt(t.startX);
-    this.lastHeading = this.heading;
+    this.state = {
+      x: t.startX,
+      y: t.heightAt(t.startX) - P.RIDE_H,
+      vx: 0,
+      vy: 0,
+      heading: t.slopeAt(t.startX),
+      grounded: true,
+    };
+    this.lastHeading = this.state.heading;
+    this.syncRider();
     this.cam.x = t.startX;
     this.resize();
     window.addEventListener("resize", this.resize);
@@ -150,26 +141,19 @@ export class Game {
     this.loop(this.last);
   }
 
-  private contacts(e: Matter.IEventCollision<Matter.Engine>, dir: number) {
-    for (const p of e.pairs) {
-      const labels = [p.bodyA.label, p.bodyB.label];
-      if (labels.includes("rider") && (labels.includes("terrain") || labels.includes("floor")))
-        this.groundContacts = Math.max(0, this.groundContacts + dir);
-    }
+  private syncRider() {
+    this.rider.position.x = this.state.x;
+    this.rider.position.y = this.state.y;
+    this.rider.velocity.x = this.state.vx;
+    this.rider.velocity.y = this.state.vy;
   }
 
   private attachInput() {
     const isSpeed = (c: string) => c === "KeyW" || c === "ArrowUp" || c === "Space";
     const isBrake = (c: string) => c === "KeyS" || c === "ArrowDown";
     const down = (e: KeyboardEvent) => {
-      if (isSpeed(e.code)) {
-        this.input.hold = true;
-        e.preventDefault();
-      }
-      if (isBrake(e.code)) {
-        this.input.brake = true;
-        e.preventDefault();
-      }
+      if (isSpeed(e.code)) { this.input.hold = true; e.preventDefault(); }
+      if (isBrake(e.code)) { this.input.brake = true; e.preventDefault(); }
       if (e.code === "ArrowLeft" || e.code === "KeyA") this.input.rot = -1;
       if (e.code === "ArrowRight" || e.code === "KeyD") this.input.rot = 1;
       if (e.code === "KeyP" || e.code === "Escape") this.togglePause();
@@ -207,9 +191,7 @@ export class Game {
     if (this.running) {
       this.last = performance.now();
       this.loop(this.last);
-    } else {
-      this.pushHud(true);
-    }
+    } else this.pushHud(true);
   }
 
   private loop = (now: number) => {
@@ -217,7 +199,7 @@ export class Game {
     this.raf = requestAnimationFrame(this.loop);
     let dt = now - this.last;
     this.last = now;
-    if (dt > 100) dt = 100; // tab-out clamp
+    if (dt > 100) dt = 100;
     this.acc += dt;
     while (this.acc >= STEP) {
       this.tick(STEP);
@@ -228,126 +210,75 @@ export class Game {
 
   private tick(dt: number) {
     if (this.finished) return;
-    const t = this.terrain;
-    const r = this.rider;
-
     if (this.replay) {
       this.driveReplay(dt);
-    } else {
-      this.grounded = this.groundContacts > 0;
-      const wiped = performance.now() < this.wipeUntil;
-
-      // start timing on first real movement
-      if (!this.moving && (this.input.hold || r.position.x > t.startX + 4)) this.moving = true;
-      if (this.moving && !this.finished) this.runMs += dt;
-
-      if (!wiped) this.applyControls(dt);
-      Matter.Engine.update(this.engine, dt);
-      this.updateRiderVisual(dt, wiped);
-      this.handleJumpTracking(dt);
-      this.checkCoinsAndFeatures();
-      this.checkFinish();
+      this.updateCamera(dt);
+      this.pushHud(false);
+      return;
     }
+
+    if (!this.moving && (this.input.hold || this.state.x > this.terrain.startX + 4)) this.moving = true;
+    if (this.moving) this.runMs += dt;
+
+    const wiped = performance.now() < this.wipeUntil;
+    const input: Input = wiped ? { hold: false, brake: true, rot: 0 } : this.input;
+    const wasAir = !this.state.grounded;
+
+    const ev = step(this.state, dt / 1000, this.terrain, input);
+    this.syncRider();
+
+    if (ev.launched) this.onTakeoff();
+    if (!this.state.grounded) this.trackAir(dt);
+    if (ev.landed) this.onLand(ev.landDiff ?? 0, ev.slope ?? 0);
+    if (this.state.grounded && !wasAir) {
+      this.settledMs += dt;
+      if (this.settledMs > 700) this.mult = 1;
+    }
+
+    this.updatePose(dt, wiped);
+    this.checkCoins();
+    this.checkFinish();
 
     this.updateCamera(dt);
     this.recordGhost();
     this.pushHud(false);
   }
 
-  private applyControls(dt: number) {
-    const r = this.rider;
-    const slope = this.terrain.slopeAt(r.position.x);
-
-    if (this.grounded) {
-      if (this.input.brake) {
-        // S / ↓ : dig in and scrub speed
-        r.frictionAir = 0.14;
-        Matter.Body.applyForce(r, r.position, { x: -Math.sign(r.velocity.x || 1) * 0.0035, y: 0 });
-      } else if (this.input.hold) {
-        // W / ↑ : pump — drives speed along the slope (buy-the-dip).
-        const downhill = slope; // slope>0 means going down to the right
-        const f = 0.0016 + Math.max(0, downhill) * 0.004;
-        Matter.Body.applyForce(r, r.position, { x: Math.cos(slope) * f, y: Math.sin(slope) * f });
-        r.frictionAir = 0.002; // tuck is slippery
-      } else {
-        r.frictionAir = 0.012;
-        // gentle forward nudge so a flat start still rolls
-        if (r.velocity.x < 6) Matter.Body.applyForce(r, r.position, { x: 0.0006, y: 0 });
-      }
-    } else {
-      // air rotation
-      if (this.input.rot !== 0) this.heading += this.input.rot * 0.13 * (dt / STEP);
-      if (this.input.hold) this.grabMs += dt; // hold in air = grab
-    }
+  private onTakeoff() {
+    this.inAir = true;
+    this.airStart = performance.now();
+    this.rotAccum = 0;
+    this.maxHeight = 0;
+    this.grabMs = 0;
+    this.lastHeading = this.state.heading;
+    this.settledMs = 0;
+    const x = this.state.x;
+    const slope = this.terrain.slopeAt(x);
+    const onRamp = this.terrain.features.some((f) => f.type === "earnings" && Math.abs(f.x - x) < 80);
+    this.launchCtx = onRamp ? "earnings" : slope < -0.15 ? "dip" : "normal";
+    if (onRamp) { this.state.vy -= 620; this.state.vx += 180; } // boost ramp pop
   }
 
-  private updateRiderVisual(dt: number, wiped: boolean) {
-    const r = this.rider;
-    const k = 1 - Math.pow(0.001, dt / 1000); // frame-rate independent ease
-    let target: Pose;
-    if (wiped) target = POSES.wipeout;
-    else if (!this.grounded) target = this.input.hold ? POSES.grab : POSES.air;
-    else if (this.input.hold) target = POSES.tuck;
-    else target = POSES.ride;
-    this.pose = lerpPose(this.pose, target, Math.min(1, k * 6));
-
-    if (this.grounded && !wiped) {
-      // ease heading onto the slope under the board
-      const slope = this.terrain.slopeAt(r.position.x);
-      let d = slope - this.heading;
-      while (d > Math.PI) d -= Math.PI * 2;
-      while (d < -Math.PI) d += Math.PI * 2;
-      this.heading += d * Math.min(1, k * 8);
-    }
+  private trackAir(dt: number) {
+    this.rotAccum += normAngle(this.state.heading - this.lastHeading);
+    this.lastHeading = this.state.heading;
+    const groundY = this.terrain.heightAt(this.state.x);
+    this.maxHeight = Math.max(this.maxHeight, groundY - this.state.y);
+    if (this.input.hold) this.grabMs += dt;
+    this.settledMs = 0;
   }
 
-  private handleJumpTracking(dt: number) {
-    const r = this.rider;
-    if (!this.grounded) {
-      if (!this.inAir) {
-        this.inAir = true;
-        this.airStart = performance.now();
-        this.rotAccum = 0;
-        this.maxHeight = 0;
-        this.grabMs = 0;
-        this.takeoffX = r.position.x;
-        const slope = this.terrain.slopeAt(r.position.x);
-        const onRamp = this.terrain.features.some(
-          (f) => f.type === "earnings" && Math.abs(f.x - r.position.x) < 80
-        );
-        this.launchCtx = onRamp ? "earnings" : slope < -0.15 ? "dip" : "normal";
-        if (onRamp) Matter.Body.applyForce(r, r.position, { x: 0.02, y: -0.06 }); // boost ramp pop
-      }
-      let d = this.heading - this.lastHeading;
-      while (d > Math.PI) d -= Math.PI * 2;
-      while (d < -Math.PI) d += Math.PI * 2;
-      this.rotAccum += d;
-      const groundY = this.terrain.heightAt(r.position.x);
-      this.maxHeight = Math.max(this.maxHeight, groundY - r.position.y);
-      this.settledMs = 0;
-    } else {
-      if (this.inAir) this.land();
-      this.settledMs += dt;
-      if (this.settledMs > 700) this.mult = 1; // combo cools off once settled
-    }
-    this.lastHeading = this.heading;
-  }
-
-  private land() {
+  private onLand(diff: number, slope: number) {
     this.inAir = false;
-    const r = this.rider;
-    const slope = this.terrain.slopeAt(r.position.x);
-    let diff = this.heading - slope;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
     const airtimeMs = performance.now() - this.airStart;
 
     if (Math.abs(diff) > WIPEOUT_RAD && airtimeMs > 250) {
-      // bad landing -> wipeout: bleed speed, reset combo, no points
       this.wipeUntil = performance.now() + 900;
       this.mult = 1;
-      Matter.Body.setVelocity(r, { x: r.velocity.x * 0.2, y: 0 });
-      this.heading = slope;
+      this.state.vx *= 0.2;
+      this.state.vy *= 0.2;
+      this.state.heading = slope;
+      this.syncRider();
       return;
     }
 
@@ -364,18 +295,25 @@ export class Game {
       this.style += pts;
       this.mult += trick.multAdd;
       this.opts.onTrick({ name: trick.name, points: pts, mult: this.mult });
-      if (pts > this.bestTrickScore) {
-        this.bestTrickScore = pts;
-        this.bestTrick = trick;
-      }
+      if (pts > this.bestTrickScore) { this.bestTrickScore = pts; this.bestTrick = trick; }
     }
-    this.heading = slope;
+    this.state.heading = slope;
   }
 
-  private checkCoinsAndFeatures() {
-    const r = this.rider;
+  private updatePose(dt: number, wiped: boolean) {
+    const k = 1 - Math.pow(0.001, dt / 1000);
+    let target: Pose;
+    if (wiped) target = POSES.wipeout;
+    else if (!this.state.grounded) target = this.input.hold ? POSES.grab : POSES.air;
+    else if (this.input.hold) target = POSES.tuck;
+    else if (this.input.brake) target = POSES.ride;
+    else target = POSES.ride;
+    this.pose = lerpPose(this.pose, target, Math.min(1, k * 6));
+  }
+
+  private checkCoins() {
     for (const c of this.terrain.coins) {
-      if (!c.taken && Math.hypot(c.x - r.position.x, c.y - r.position.y) < 30) {
+      if (!c.taken && Math.hypot(c.x - this.state.x, c.y - this.state.y) < 30) {
         c.taken = true;
         this.coins++;
         this.style += 250;
@@ -384,7 +322,7 @@ export class Game {
   }
 
   private checkFinish() {
-    if (this.rider.position.x >= this.terrain.finishX && !this.finished) this.finish();
+    if (this.state.x >= this.terrain.finishX && !this.finished) this.finish();
   }
 
   finish() {
@@ -411,14 +349,74 @@ export class Game {
     window.removeEventListener("resize", this.resize);
   }
 
-  // ---- offscreen capture (used by the GIF exporter) ----
-  // Builds the world without input/loop/events; seek() then renders one frame.
+  private driveReplay(dt: number) {
+    this.runMs += dt;
+    const fps = 1000 / STEP;
+    const idx = Math.floor((this.runMs / 1000) * fps);
+    const p = this.replay!;
+    if (idx >= p.length - 1) {
+      const last = p[p.length - 1];
+      this.state.x = last.x; this.state.y = last.y; this.state.heading = last.h;
+      this.syncRider();
+      if (!this.finished) this.finish();
+      return;
+    }
+    const a = p[idx];
+    const b = p[idx + 1] ?? a;
+    const f = (this.runMs / 1000) * fps - idx;
+    this.state.x = a.x + (b.x - a.x) * f;
+    this.state.y = a.y + (b.y - a.y) * f;
+    this.state.heading = a.h;
+    this.syncRider();
+  }
+
+  private recordGhost() {
+    if (this.replay) return;
+    this.path.push({ x: this.state.x, y: this.state.y, h: this.state.heading });
+    if (this.path.length > 5800) this.path.shift();
+  }
+
+  private updateCamera(dt: number) {
+    const w = this.canvas.clientWidth || this.canvas.width;
+    const targetX = this.state.x - w * 0.32 + this.state.vx * 0.18;
+    const air = Math.max(0, this.terrain.heightAt(this.state.x) - this.state.y);
+    const targetZoom = Math.max(0.7, 1 - air / 1600);
+    const k = 0.08 * (dt / STEP);
+    this.cam.x += (targetX - this.cam.x) * k;
+    this.cam.y += (this.state.y - 360 - this.cam.y) * 0.05 * (dt / STEP);
+    this.cam.zoom += (targetZoom - this.cam.zoom) * 0.06 * (dt / STEP);
+  }
+
+  private pushHud(paused: boolean) {
+    const i = Math.min(
+      this.data.closes.length - 1,
+      Math.floor((this.state.x / this.terrain.finishX) * this.data.closes.length)
+    );
+    this.opts.onHud({
+      symbol: this.data.symbol,
+      price: this.data.closes[Math.max(0, i)].close,
+      netPct: this.data.sentiment.netPct,
+      up: this.data.sentiment.up,
+      timeMs: this.runMs,
+      speed: Math.min(1, Math.abs(this.state.vx) / 1200),
+      airtime: this.inAir ? Math.min(1, (performance.now() - this.airStart) / 3000) : 0,
+      style: this.style,
+      mult: this.mult,
+      progress: Math.min(1, this.state.x / this.terrain.finishX),
+      paused,
+    });
+  }
+
+  private render() {
+    drawWorld(this.ctx, this);
+  }
+
+  // ---- offscreen capture for the GIF exporter ----
   setupForCapture(data: SeriesData, path: GhostFrame[]) {
     this.data = data;
     this.sky = SECTOR_SKY[data.sector];
     this.terrain = buildTerrain(data.closes);
     this.replay = path;
-    this.rider = Matter.Bodies.circle(this.terrain.startX, 0, 13, {});
     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
@@ -426,8 +424,8 @@ export class Game {
     const p = this.replay!;
     const idx = Math.min(p.length - 1, Math.max(0, Math.floor(frac * (p.length - 1))));
     const f = p[idx];
-    Matter.Body.setPosition(this.rider, { x: f.x, y: f.y });
-    this.heading = f.h;
+    this.state.x = f.x; this.state.y = f.y; this.state.heading = f.h;
+    this.syncRider();
     const air = this.terrain.heightAt(f.x) - f.y;
     this.pose = air > 24 ? POSES.air : POSES.ride;
     const w = this.canvas.width;
@@ -436,64 +434,5 @@ export class Game {
     this.cam.x = f.x - (w * 0.4) / this.cam.zoom;
     this.cam.y = f.y - (hgt * 0.52) / this.cam.zoom;
     this.render();
-  }
-
-  private driveReplay(dt: number) {
-    this.runMs += dt;
-    const fps = 1000 / STEP;
-    const idx = Math.floor((this.runMs / 1000) * fps);
-    const p = this.replay!;
-    if (idx >= p.length - 1) {
-      const last = p[p.length - 1];
-      Matter.Body.setPosition(this.rider, { x: last.x, y: last.y });
-      this.heading = last.h;
-      if (!this.finished) this.finish();
-      return;
-    }
-    const a = p[idx];
-    const b = p[idx + 1] ?? a;
-    const f = (this.runMs / 1000) * fps - idx;
-    Matter.Body.setPosition(this.rider, { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f });
-    this.heading = a.h;
-  }
-
-  private recordGhost() {
-    if (this.replay) return;
-    const r = this.rider;
-    this.path.push({ x: r.position.x, y: r.position.y, h: this.heading });
-    if (this.path.length > 5800) this.path.shift(); // safety bound for KV size
-  }
-
-  private updateCamera(dt: number) {
-    const r = this.rider;
-    const w = this.canvas.clientWidth;
-    const targetX = r.position.x - w * 0.32 + r.velocity.x * 14;
-    const air = Math.max(0, this.terrain.heightAt(r.position.x) - r.position.y);
-    const targetZoom = Math.max(0.7, 1 - air / 1600);
-    const k = 0.08 * (dt / STEP);
-    this.cam.x += (targetX - this.cam.x) * k;
-    this.cam.y += (r.position.y - 360 - this.cam.y) * 0.05 * (dt / STEP);
-    this.cam.zoom += (targetZoom - this.cam.zoom) * 0.06 * (dt / STEP);
-  }
-
-  private pushHud(paused: boolean) {
-    const i = Math.min(this.data.closes.length - 1, Math.floor((this.rider.position.x / this.terrain.finishX) * this.data.closes.length));
-    this.opts.onHud({
-      symbol: this.data.symbol,
-      price: this.data.closes[Math.max(0, i)].close,
-      netPct: this.data.sentiment.netPct,
-      up: this.data.sentiment.up,
-      timeMs: this.runMs,
-      speed: Math.min(1, Math.abs(this.rider.velocity.x) / 18),
-      airtime: this.inAir ? Math.min(1, (performance.now() - this.airStart) / 3000) : 0,
-      style: this.style,
-      mult: this.mult,
-      progress: Math.min(1, this.rider.position.x / this.terrain.finishX),
-      paused,
-    });
-  }
-
-  private render() {
-    drawWorld(this.ctx, this);
   }
 }
