@@ -234,6 +234,20 @@ export class Game {
     const ev = step(this.state, dt / 1000, this.terrain, input);
     this.syncRider();
 
+    // Hard barriers at both ends so the rider can never ride off the map. The
+    // right wall sits on the finish line, so hitting it ends the run normally.
+    const minX = this.terrain.pts[0].x;
+    const maxX = this.terrain.finishX;
+    if (this.state.x < minX) {
+      this.state.x = minX;
+      if (this.state.vx < 0) this.state.vx = 0;
+      this.syncRider();
+    } else if (this.state.x > maxX) {
+      this.state.x = maxX;
+      if (this.state.vx > 0) this.state.vx = 0;
+      this.syncRider();
+    }
+
     if (ev.launched) this.onTakeoff();
     if (!this.state.grounded) this.trackAir(dt);
     if (ev.landed) this.onLand(ev.landDiff ?? 0, ev.slope ?? 0);
@@ -387,7 +401,10 @@ export class Game {
     const w = this.canvas.clientWidth || this.canvas.width;
     const targetX = this.state.x - w * 0.32 + this.state.vx * 0.18;
     const air = Math.max(0, this.terrain.heightAt(this.state.x) - this.state.y);
-    const targetZoom = Math.max(0.7, 1 - air / 1600);
+    // Pull the camera back as the rider speeds up (and when airborne) so more of
+    // the mountain is visible at pace.
+    const speedFrac = Math.min(1, Math.abs(this.state.vx) / P.SMAX);
+    const targetZoom = Math.max(0.5, 1 - air / 1600 - speedFrac * 0.32);
     const k = 0.08 * (dt / STEP);
     this.cam.x += (targetX - this.cam.x) * k;
     this.cam.y += (this.state.y - 360 - this.cam.y) * 0.05 * (dt / STEP);
