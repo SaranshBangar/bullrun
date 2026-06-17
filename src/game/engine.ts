@@ -194,6 +194,13 @@ export class Game {
     } else this.pushHud(true);
   }
 
+  // On-screen touch controls (mobile / tablet) feed the exact same `input` the
+  // keyboard handlers do, so the physics path is identical.
+  setHold(v: boolean) { this.input.hold = v; }
+  setBrake(v: boolean) { this.input.brake = v; }
+  pressRot(dir: -1 | 1) { this.input.rot = dir; }
+  releaseRot(dir: -1 | 1) { if (this.input.rot === dir) this.input.rot = 0; }
+
   private loop = (now: number) => {
     if (!this.running) return;
     this.raf = requestAnimationFrame(this.loop);
