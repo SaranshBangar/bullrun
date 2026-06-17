@@ -237,6 +237,7 @@ function gameScreen(data: SeriesData, isDaily: boolean, ghost: GhostFrame[] | nu
   const canvas = screen.querySelector<HTMLCanvasElement>("#game-canvas")!;
   const $ = (id: string) => screen.querySelector<HTMLElement>("#" + id)!;
   const game = new Game(canvas);
+  game.armed = !replay; // hold at the start line for the 3·2·1 countdown
 
   game.start(data, {
     ghost,
@@ -273,7 +274,31 @@ function gameScreen(data: SeriesData, isDaily: boolean, ghost: GhostFrame[] | nu
   } else {
     $("pause").addEventListener("click", () => game.togglePause());
     wireTouchControls(screen, game);
+    runCountdown(screen, () => { game.armed = false; });
   }
+}
+
+// 3·2·1·GO drop-in. The rider is frozen (game.armed) until "GO", which fires
+// `onGo` to release it.
+function runCountdown(screen: HTMLElement, onGo: () => void) {
+  const stage = screen.querySelector(".game-stage") ?? screen;
+  const el = h(`<div class="countdown"><span class="cd-num"></span></div>`);
+  stage.appendChild(el);
+  const num = el.querySelector<HTMLElement>(".cd-num")!;
+  const seq = ["3", "2", "1", "GO"];
+  let i = 0;
+  const show = () => {
+    num.textContent = seq[i];
+    num.classList.toggle("go", seq[i] === "GO");
+    num.classList.remove("pop");
+    void num.offsetWidth; // restart the pop animation
+    num.classList.add("pop");
+    if (seq[i] === "GO") onGo();
+    i++;
+    if (i < seq.length) setTimeout(show, 750);
+    else setTimeout(() => el.remove(), 550);
+  };
+  show();
 }
 
 // On-screen d-pad for touch devices. Each button holds while pressed and feeds

@@ -6,6 +6,8 @@ import {
   nameFor,
   sentiment,
   dailyTicker,
+  SECTOR_SKY,
+  type Sector,
 } from "../src/shared/series";
 
 export interface Env {
@@ -43,6 +45,13 @@ export default {
       if (path === "/api/share" && req.method === "POST") return saveShare(env, req);
       if (path.startsWith("/api/share/")) return getShare(env, path.split("/").pop()!);
       if (path.startsWith("/api/")) return json({ error: "not found" }, 404);
+
+      // Social preview: a per-run Open Graph card, and SPA HTML with injected
+      // og:/twitter: tags so shared /r/<id> links unfurl with that card.
+      const ogm = path.match(/^\/og\/([A-Za-z0-9_-]+)\.svg$/);
+      if (ogm) return ogCard(env, ogm[1]);
+      const rm = path.match(/^\/r\/([A-Za-z0-9_-]+)$/);
+      if (rm && req.method === "GET") return replayPage(env, req, rm[1]);
     } catch (e: any) {
       console.error(e);
       return json({ error: e?.message || "server error" }, 500);
@@ -172,4 +181,105 @@ async function getShare(env: Env, id: string): Promise<Response> {
   const snap = await env.KV.get(`share:${id}`, "json");
   if (!snap) return json({ error: "not found" }, 404);
   return json(snap);
+}
+
+// ---- social preview (Open Graph) ----
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+}
+
+function fmtTime(ms: number | null | undefined): string {
+  if (ms == null) return "DNF";
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  const cs = Math.floor((ms % 1000) / 10);
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+}
+
+// Serve the SPA shell with run-specific og:/twitter: tags injected so a shared
+// /r/<id> link unfurls into a rich card on socials/chat. Falls back to the
+// plain SPA when the run id isn't found.
+async function replayPage(env: Env, req: Request, id: string): Promise<Response> {
+  const indexRes = await env.ASSETS.fetch(new Request(new URL("/", req.url)));
+  let html = await indexRes.text();
+  const snap = (await env.KV.get(`share:${id}`, "json")) as any;
+  if (snap) {
+    const origin = (env.BASE_URL || new URL(req.url).origin).replace(/\/$/, "");
+    const ticker = String(snap.ticker ?? snap.symbol ?? "").toUpperCase();
+    const time = fmtTime(snap.result?.timeMs);
+    const style = Number(snap.result?.style ?? 0).toLocaleString("en-US");
+    const trick = snap.result?.bestTrick ? ` · ${snap.result.bestTrick}` : "";
+    const title = `BullRun — ${ticker} · ${time}`;
+    const desc = `Style ${style}${trick}. Ride ${snap.name ?? ticker}'s six-month chart on BullRun.`;
+    const img = `${origin}/og/${id}.svg`;
+    const tags =
+      `<meta property="og:type" content="website">` +
+      `<meta property="og:url" content="${esc(origin + "/r/" + id)}">` +
+      `<meta property="og:title" content="${esc(title)}">` +
+      `<meta property="og:description" content="${esc(desc)}">` +
+      `<meta property="og:image" content="${esc(img)}">` +
+      `<meta property="og:image:type" content="image/svg+xml">` +
+      `<meta property="og:image:width" content="1200">` +
+      `<meta property="og:image:height" content="630">` +
+      `<meta name="twitter:card" content="summary_large_image">` +
+      `<meta name="twitter:title" content="${esc(title)}">` +
+      `<meta name="twitter:description" content="${esc(desc)}">` +
+      `<meta name="twitter:image" content="${esc(img)}">`;
+    html = html
+      .replace(/<title>[\s\S]*?<\/title>/, `<title>${esc(title)}</title>`)
+      .replace("</head>", tags + "</head>");
+  }
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+// A self-contained SVG social card (1200×630): sector-tinted sky, the run's
+// price line, ticker, time and style.
+async function ogCard(env: Env, id: string): Promise<Response> {
+  const snap = (await env.KV.get(`share:${id}`, "json")) as any;
+  const W = 1200;
+  const H = 630;
+  const ticker = String(snap?.ticker ?? snap?.symbol ?? "BULLRUN").toUpperCase();
+  const sector = (snap?.sector ?? sectorFor(ticker)) as Sector;
+  const [c0, c1, c2] = SECTOR_SKY[sector] ?? SECTOR_SKY.Tech;
+  const time = fmtTime(snap?.result?.timeMs);
+  const style = Number(snap?.result?.style ?? 0).toLocaleString("en-US");
+  const by = String(snap?.by ?? "guest");
+  const line = snap?.sentiment?.up === false ? "#ef4b3c" : "#16c66a";
+
+  const closes: { close: number }[] = Array.isArray(snap?.closes) ? snap.closes : [];
+  let d = "";
+  if (closes.length > 1) {
+    const ys = closes.map((c) => c.close);
+    const min = Math.min(...ys);
+    const span = Math.max(...ys) - min || 1;
+    const top = 360;
+    const bot = H - 36;
+    d = closes
+      .map((c, i) => {
+        const x = (i / (closes.length - 1)) * W;
+        const y = bot - ((c.close - min) / span) * (bot - top);
+        return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="${c0}"/><stop offset="0.56" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/>
+  </linearGradient></defs>
+  <rect width="${W}" height="${H}" fill="url(#sky)"/>
+  ${d ? `<path d="${d} L ${W},${H} L 0,${H} Z" fill="${line}" fill-opacity="0.18"/><path d="${d}" fill="none" stroke="${line}" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>` : ""}
+  <text x="64" y="118" font-family="'Space Grotesk',sans-serif" font-size="40" font-weight="700" fill="#fff">BullRun</text>
+  <text x="60" y="258" font-family="'Space Grotesk',sans-serif" font-size="150" font-weight="700" fill="#fff">${esc(ticker)}</text>
+  <text x="64" y="320" font-family="monospace" font-size="32" fill="rgba(255,255,255,0.85)">${esc(sector)} · @${esc(by)}</text>
+  <g font-family="monospace" fill="#fff">
+    <text x="64" y="556" font-size="26" fill="rgba(255,255,255,0.7)">TIME</text>
+    <text x="64" y="602" font-size="46" font-weight="700">${esc(time)}</text>
+    <text x="440" y="556" font-size="26" fill="rgba(255,255,255,0.7)">STYLE</text>
+    <text x="440" y="602" font-size="46" font-weight="700">${esc(style)}</text>
+  </g>
+</svg>`;
+  return new Response(svg, {
+    headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=86400" },
+  });
 }
