@@ -3,9 +3,11 @@
 // because `generate` only reads plugin schemas, it never connects. Not shipped.
 import { betterAuth } from "better-auth";
 import { dash, sentinel } from "@better-auth/infra";
+import { SqliteDialect } from "kysely";
+import Database from "better-sqlite3";
 
 export const auth = betterAuth({
-  database: { dialect: {} as any, type: "sqlite" },
+  database: { dialect: new SqliteDialect({ database: new Database(":memory:") }), type: "sqlite" },
   emailAndPassword: { enabled: true },
   plugins: [dash(), sentinel()],
 });
