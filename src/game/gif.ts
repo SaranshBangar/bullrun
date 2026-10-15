@@ -54,19 +54,13 @@ export async function downloadRunGif(data: SeriesData, path: GhostFrame[], timeM
   }
   enc.finish();
 
-  const blob = new Blob([enc.bytes() as BlobPart], { type: "image/gif" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `bullrun-${data.symbol}.gif`;
-  a.click();
-  URL.revokeObjectURL(url);
   g.destroy();
+  downloadBlob(new Blob([enc.bytes() as BlobPart], { type: "image/gif" }), `bullrun-${data.symbol}.gif`);
 }
 
-// Renders a single still of the run (the rider's highest point — the most
-// dramatic frame) to a high-res PNG and triggers a download.
-export async function downloadRunImage(data: SeriesData, path: GhostFrame[], timeMs: number | null) {
+// Renders a shareable 1200×675 card: the run's most dramatic frame (the
+// rider's highest point) with the result and the chart's move burned in.
+export async function renderRunImage(data: SeriesData, path: GhostFrame[], timeMs: number | null, style: number): Promise<Blob> {
   if (!path || path.length < 2) throw new Error("Run too short to capture.");
 
   const IW = 1200;
@@ -81,34 +75,65 @@ export async function downloadRunImage(data: SeriesData, path: GhostFrame[], tim
   // smallest y = highest the rider got (y grows downward)
   let peak = 0;
   for (let i = 1; i < path.length; i++) if (path[i].y < path[peak].y) peak = i;
-  g.seek(peak / (path.length - 1));
+  g.seek(peak / (path.length - 1), true);
+  g.destroy();
 
-  const caption = `${data.symbol} · ${fmt(timeMs)}`;
+  await document.fonts?.ready;
+  const pct = data.sentiment.netPct;
   ctx.save();
-  ctx.font = "600 34px 'Space Grotesk', sans-serif";
-  const tw = ctx.measureText(caption).width;
-  ctx.fillStyle = "rgba(13,15,19,0.55)";
-  roundRect(ctx, 28, 28, tw + 52, 64, 16);
+  ctx.textAlign = "left";
+  // top-left: brand + ticker + the chart's 6-month move
+  const pctText = `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}% · 6M`;
+  ctx.font = "600 34px 'IBM Plex Mono', monospace";
+  const symW = ctx.measureText(data.symbol).width;
+  ctx.font = "600 22px 'IBM Plex Mono', monospace";
+  const pctW = ctx.measureText(pctText).width;
+  ctx.fillStyle = "rgba(13,15,19,0.6)";
+  roundRect(ctx, 28, 28, Math.max(260, symW + pctW + 66), 96, 18);
   ctx.fill();
-  ctx.fillStyle = "#fff";
-  ctx.textBaseline = "middle";
-  ctx.fillText(caption, 54, 62);
+  ctx.textBaseline = "alphabetic";
   ctx.fillStyle = "#16c66a";
-  ctx.font = "700 30px 'Space Grotesk', sans-serif";
+  ctx.font = "700 24px 'Space Grotesk', sans-serif";
+  ctx.fillText("BullRun", 52, 66);
+  ctx.fillStyle = "#fff";
+  ctx.font = "600 34px 'IBM Plex Mono', monospace";
+  ctx.fillText(data.symbol, 52, 106);
+  ctx.font = "600 22px 'IBM Plex Mono', monospace";
+  ctx.fillStyle = pct >= 0 ? "#45d488" : "#ef4b3c";
+  ctx.fillText(pctText, 52 + symW + 18, 104);
+
+  // bottom band: result
+  ctx.fillStyle = "rgba(13,15,19,0.72)";
+  ctx.fillRect(0, IH - 112, IW, 112);
+  const stat = (x: number, k: string, v: string) => {
+    ctx.fillStyle = "rgba(255,255,255,0.65)";
+    ctx.font = "500 18px 'IBM Plex Mono', monospace";
+    ctx.fillText(k, x, IH - 70);
+    ctx.fillStyle = "#fff";
+    ctx.font = "600 38px 'IBM Plex Mono', monospace";
+    ctx.fillText(v, x, IH - 26);
+  };
+  stat(48, "TIME", fmt(timeMs));
+  stat(360, "STYLE", style.toLocaleString("en-US"));
   ctx.textAlign = "right";
-  ctx.fillText("BullRun", IW - 40, 60);
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  ctx.font = "600 22px 'Space Grotesk', sans-serif";
+  ctx.fillText(data.name.length > 34 ? data.name.slice(0, 33) + "…" : data.name, IW - 48, IH - 66);
+  ctx.fillStyle = "#16c66a";
+  ctx.font = "600 20px 'IBM Plex Mono', monospace";
+  ctx.fillText("Can you beat it?", IW - 48, IH - 30);
   ctx.restore();
 
-  const blob: Blob = await new Promise((res, rej) =>
-    cap.toBlob((b) => (b ? res(b) : rej(new Error("encode failed"))), "image/png")
-  );
+  return new Promise((res, rej) => cap.toBlob((b) => (b ? res(b) : rej(new Error("encode failed"))), "image/png"));
+}
+
+export function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `bullrun-${data.symbol}.png`;
+  a.download = name;
   a.click();
-  URL.revokeObjectURL(url);
-  g.destroy();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {

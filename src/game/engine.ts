@@ -12,6 +12,9 @@ export interface SeriesData {
   sector: Sector;
   sentiment: { netPct: number; up: boolean };
   closes: Close[];
+  exchange?: string;
+  currency?: string;
+  simulated?: boolean; // offline fallback prices, not real market data
 }
 
 export interface GhostFrame {
@@ -30,10 +33,7 @@ export interface RunResult {
 }
 
 export interface HudState {
-  symbol: string;
-  price: number;
-  netPct: number;
-  up: boolean;
+  index: number; // close under the rider
   timeMs: number;
   speed: number; // 0..1
   airtime: number; // 0..1
@@ -54,7 +54,6 @@ export interface GameOpts {
   onTrick: (t: TrickToast) => void;
   onFinish: (r: RunResult) => void;
   ghost?: GhostFrame[] | null;
-  replay?: GhostFrame[] | null;
 }
 
 const STEP = 1000 / 60; // ms per fixed sim step
@@ -103,7 +102,7 @@ export class Game {
   launchCtx: Jump["launch"] = "normal";
 
   ghost: GhostFrame[] | null = null;
-  replay: GhostFrame[] | null = null;
+  replay: GhostFrame[] | null = null; // only set for GIF/image capture
   raf = 0;
   acc = 0;
   last = 0;
@@ -118,7 +117,6 @@ export class Game {
     this.data = data;
     this.opts = opts;
     this.ghost = opts.ghost ?? null;
-    this.replay = opts.replay ?? null;
     this.sky = SECTOR_SKY[data.sector];
     this.terrain = buildTerrain(data.closes);
 
@@ -133,10 +131,10 @@ export class Game {
     };
     this.lastHeading = this.state.heading;
     this.syncRider();
-    this.cam.x = t.startX;
     this.resize();
+    this.updateCamera(STEP, true);
     window.addEventListener("resize", this.resize);
-    if (!this.replay) this.attachInput();
+    this.attachInput();
     this.running = true;
     this.last = performance.now();
     this.loop(this.last);
@@ -228,12 +226,6 @@ export class Game {
     // Frozen at the start line until the countdown releases the rider; still
     // ease the camera into frame so the hold doesn't look static.
     if (this.armed) { this.updateCamera(dt); this.pushHud(false); return; }
-    if (this.replay) {
-      this.driveReplay(dt);
-      this.updateCamera(dt);
-      this.pushHud(false);
-      return;
-    }
 
     if (!this.moving && (this.input.hold || this.state.x > this.terrain.startX + 4)) this.moving = true;
     if (this.moving) this.runMs += dt;
@@ -241,9 +233,22 @@ export class Game {
     const wiped = performance.now() < this.wipeUntil;
     const input: Input = wiped ? { hold: false, brake: true, rot: 0 } : this.input;
     const wasAir = !this.state.grounded;
+    const prevX = this.state.x;
 
     const ev = step(this.state, dt / 1000, this.terrain, input);
     this.syncRider();
+
+    // Rally ramps (the chart's biggest up-days) pop a grounded rider skyward.
+    const ramp = !wasAir && this.state.grounded &&
+      this.terrain.features.some((f) => f.type === "rally" && prevX < f.x && this.state.x >= f.x);
+    if (ramp) {
+      this.state.grounded = false;
+      this.state.vy = Math.min(this.state.vy, 0) - 760;
+      this.state.vx = Math.max(this.state.vx, 520) + 140;
+      this.syncRider();
+      this.onTakeoff("rally");
+      this.buzz(30);
+    }
 
     // Hard barriers at both ends so the rider can never ride off the map. The
     // right wall sits on the finish line, so hitting it ends the run normally.
@@ -259,7 +264,7 @@ export class Game {
       this.syncRider();
     }
 
-    if (ev.launched) this.onTakeoff();
+    if (ev.launched) this.onTakeoff(this.terrain.slopeAt(this.state.x) < -0.15 ? "dip" : "normal");
     if (!this.state.grounded) this.trackAir(dt);
     if (ev.landed) this.onLand(ev.landDiff ?? 0, ev.slope ?? 0);
     if (this.state.grounded && !wasAir) {
@@ -276,7 +281,7 @@ export class Game {
     this.pushHud(false);
   }
 
-  private onTakeoff() {
+  private onTakeoff(ctx: Jump["launch"]) {
     this.inAir = true;
     this.airStart = performance.now();
     this.rotAccum = 0;
@@ -284,11 +289,7 @@ export class Game {
     this.grabMs = 0;
     this.lastHeading = this.state.heading;
     this.settledMs = 0;
-    const x = this.state.x;
-    const slope = this.terrain.slopeAt(x);
-    const onRamp = this.terrain.features.some((f) => f.type === "earnings" && Math.abs(f.x - x) < 80);
-    this.launchCtx = onRamp ? "earnings" : slope < -0.15 ? "dip" : "normal";
-    if (onRamp) { this.state.vy -= 620; this.state.vx += 180; } // boost ramp pop
+    this.launchCtx = ctx;
   }
 
   private trackAir(dt: number) {
@@ -384,63 +385,40 @@ export class Game {
     window.removeEventListener("resize", this.resize);
   }
 
-  private driveReplay(dt: number) {
-    this.runMs += dt;
-    const fps = 1000 / STEP;
-    const idx = Math.floor((this.runMs / 1000) * fps);
-    const p = this.replay!;
-    if (idx >= p.length - 1) {
-      const last = p[p.length - 1];
-      this.state.x = last.x; this.state.y = last.y; this.state.heading = last.h;
-      this.syncRider();
-      if (!this.finished) this.finish();
-      return;
-    }
-    const a = p[idx];
-    const b = p[idx + 1] ?? a;
-    const f = (this.runMs / 1000) * fps - idx;
-    this.state.x = a.x + (b.x - a.x) * f;
-    this.state.y = a.y + (b.y - a.y) * f;
-    this.state.heading = a.h;
-    this.syncRider();
-  }
-
   private recordGhost() {
-    if (this.replay) return;
     this.path.push({ x: this.state.x, y: this.state.y, h: this.state.heading });
     if (this.path.length > 5800) this.path.shift();
   }
 
-  private updateCamera(dt: number) {
+  // Framing is relative to the canvas size so phones (portrait or landscape)
+  // see the rider and the slope ahead the same way a desktop does.
+  private updateCamera(dt: number, snap = false) {
     const w = this.canvas.clientWidth || this.canvas.width;
-    const targetX = this.state.x - w * 0.32 + this.state.vx * 0.18;
-    const air = Math.max(0, this.terrain.heightAt(this.state.x) - this.state.y);
-    // Pull the camera back as the rider speeds up (and when airborne) so more of
-    // the mountain is visible at pace.
+    const h = this.canvas.clientHeight || this.canvas.height;
+    const ground = this.terrain.heightAt(this.state.x);
+    const air = Math.max(0, ground - this.state.y);
+    // Pull back as the rider speeds up (and when airborne) to show more mountain.
     const speedFrac = Math.min(1, Math.abs(this.state.vx) / P.SMAX);
-    const targetZoom = Math.max(0.5, 1 - air / 1600 - speedFrac * 0.32);
-    const k = 0.08 * (dt / STEP);
-    this.cam.x += (targetX - this.cam.x) * k;
-    this.cam.y += (this.state.y - 360 - this.cam.y) * 0.05 * (dt / STEP);
-    this.cam.zoom += (targetZoom - this.cam.zoom) * 0.06 * (dt / STEP);
+    const scale = Math.min(1.15, Math.max(0.5, h / 720));
+    const targetZoom = scale * Math.max(0.5, 1 - air / 1600 - speedFrac * 0.32);
+    const k = snap ? 1 : 0.08 * (dt / STEP);
+    this.cam.zoom += (targetZoom - this.cam.zoom) * (snap ? 1 : 0.06 * (dt / STEP));
+    const z = this.cam.zoom;
+    const fx = 0.36 - 0.12 * speedFrac; // rider sits left of centre, more so at speed
+    const focusY = this.state.y + Math.min(air, 420) * 0.5; // keep the ground in view mid-air
+    this.cam.x += (this.state.x - (w * fx) / z - this.cam.x) * k;
+    this.cam.y += (focusY - (h * 0.55) / z - this.cam.y) * k;
   }
 
   private pushHud(paused: boolean) {
-    const i = Math.min(
-      this.data.closes.length - 1,
-      Math.floor((this.state.x / this.terrain.finishX) * this.data.closes.length)
-    );
     this.opts.onHud({
-      symbol: this.data.symbol,
-      price: this.data.closes[Math.max(0, i)].close,
-      netPct: this.data.sentiment.netPct,
-      up: this.data.sentiment.up,
+      index: this.terrain.indexAt(this.state.x),
       timeMs: this.runMs,
       speed: Math.min(1, Math.abs(this.state.vx) / 1200),
       airtime: this.inAir ? Math.min(1, (performance.now() - this.airStart) / 3000) : 0,
       style: this.style,
       mult: this.mult,
-      progress: Math.min(1, this.state.x / this.terrain.finishX),
+      progress: Math.max(0, Math.min(1, (this.state.x - this.terrain.dayX[0]) / (this.terrain.finishX - this.terrain.dayX[0]))),
       paused,
     });
   }
@@ -458,19 +436,23 @@ export class Game {
     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  seek(frac: number) {
+  // `fit` (stills): zoom so both the rider and the ground beneath stay in frame.
+  seek(frac: number, fit = false) {
     const p = this.replay!;
     const idx = Math.min(p.length - 1, Math.max(0, Math.floor(frac * (p.length - 1))));
     const f = p[idx];
     this.state.x = f.x; this.state.y = f.y; this.state.heading = f.h;
     this.syncRider();
-    const air = this.terrain.heightAt(f.x) - f.y;
+    const ground = this.terrain.heightAt(f.x);
+    const air = ground - f.y;
     this.pose = air > 24 ? POSES.air : POSES.ride;
     const w = this.canvas.width;
     const hgt = this.canvas.height;
-    this.cam.zoom = 0.46;
+    this.cam.zoom = fit ? Math.min(0.62, Math.max(0.3, (hgt * 0.42) / (air + 220))) : 0.46;
+    const midY = fit ? (f.y + ground) / 2 : f.y;
     this.cam.x = f.x - (w * 0.4) / this.cam.zoom;
-    this.cam.y = f.y - (hgt * 0.52) / this.cam.zoom;
+    this.cam.y = midY - (hgt * (fit ? 0.42 : 0.52)) / this.cam.zoom;
     this.render();
   }
+
 }

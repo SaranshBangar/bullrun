@@ -4,6 +4,7 @@ import assert from "node:assert";
 import { catmullRom } from "../src/shared/spline.ts";
 import { syntheticCloses, sentiment, dailyTicker } from "../src/shared/series.ts";
 import { step, P, type Rider } from "../src/game/physics.ts";
+import { buildTerrain } from "../src/game/terrain.ts";
 
 // catmull-rom passes through its control points
 const ctrl = [
@@ -72,5 +73,26 @@ const r2: Rider = { x: 0, y: 0, vx: 800, vy: 0, heading: 0, grounded: true };
 const flat = { heightAt: () => 16, slopeAt: () => 0 };
 for (let i = 0; i < 30; i++) step(r2, 1 / 60, flat, { hold: false, brake: true, rot: 0 });
 assert(r2.vx < 800, "brake reduces speed");
+
+// physics D: holding throttle crawls up even a wall steeper than pump can
+// climb (a huge one-day rally); stalling there would trap the player.
+const steep = {
+  heightAt: (x: number) => (x < 300 ? 600 : x < 550 ? 600 - (x - 300) * 1.7 : 175),
+  slopeAt: (x: number) => Math.atan2(steep.heightAt(x + 6) - steep.heightAt(x - 6), 12),
+};
+const rw: Rider = { x: 200, y: 600 - P.RIDE_H, vx: 100, vy: 0, heading: 0, grounded: true };
+for (let i = 0; i < 60 * 20 && rw.x < 700; i++) step(rw, 1 / 60, steep, { hold: true, brake: false, rot: 0 });
+assert(rw.x >= 700, "held throttle climbs a steep wall");
+
+// terrain E: a held-throttle rider finishes real-shaped charts, and the HUD's
+// position -> close lookup lands on the right trading day.
+for (const sym of ["NVDA", "KO", "TSLA"]) {
+  const closes = syntheticCloses(sym, 126);
+  const t = buildTerrain(closes);
+  const rt: Rider = { x: t.startX, y: t.heightAt(t.startX) - P.RIDE_H, vx: 350, vy: 0, heading: 0, grounded: true };
+  for (let i = 0; i < 60 * 120 && rt.x < t.finishX; i++) step(rt, 1 / 60, t, { hold: true, brake: false, rot: 0 });
+  assert(rt.x >= t.finishX, "held throttle reaches the finish");
+  assert(t.indexAt(t.dayX[5] + 1) === 5 && t.indexAt(t.dayX[6] - 1) === 6 && t.indexAt(t.finishX) === 125, "position maps to the right close");
+}
 
 console.log("✓ all checks passed");
