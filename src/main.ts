@@ -1,5 +1,5 @@
 import { api, UnknownSymbol, type Symbol as Sym } from "./api";
-import { Game, type SeriesData, type RunResult, type GhostFrame } from "./game/engine";
+import { Game, type Action, type SeriesData, type RunResult, type GhostFrame } from "./game/engine";
 import { loadBest, recordRun } from "./bests";
 import { sectorFor, nameFor, dailyTicker, fmtPrice, fmtDate, SECTOR_SKY, UNIVERSE, type Close } from "./shared/series";
 import { catmullRom, toPath } from "./shared/spline";
@@ -280,12 +280,12 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
       </div>
       <div class="game-controls">
         <div class="ctl-cluster ctl-dir">
-          <button class="ctl-btn" id="c-left" aria-label="Tilt left">◄</button>
-          <button class="ctl-btn" id="c-right" aria-label="Tilt right">►</button>
+          <button class="ctl-btn" id="c-left" data-act="left" aria-label="Tilt left">◄</button>
+          <button class="ctl-btn" id="c-right" data-act="right" aria-label="Tilt right">►</button>
         </div>
         <div class="ctl-cluster ctl-throttle">
-          <button class="ctl-btn" id="c-up" aria-label="Speed up">▲</button>
-          <button class="ctl-btn" id="c-down" aria-label="Brake">▼</button>
+          <button class="ctl-btn" id="c-up" data-act="hold" aria-label="Speed up">▲</button>
+          <button class="ctl-btn" id="c-down" data-act="brake" aria-label="Brake">▼</button>
         </div>
       </div>
     </div>`);
@@ -357,39 +357,53 @@ function runCountdown(screen: HTMLElement, onGo: () => void) {
   show();
 }
 
-// On-screen d-pad for touch devices. Each button holds while pressed and feeds
-// the same input the keyboard does. Releases are tracked per-pointer at the
-// window level, so any number of buttons can be held at once (true multitouch —
-// e.g. accelerate + tilt together) and a finger that slides off still releases.
+// On-screen pad for touch devices. Every finger is tracked on its own, so any
+// buttons can be held together (e.g. ▲ + ◄ to speed up while rotating) and
+// lifting one never cancels another. A finger that slides from one button to
+// another switches action (◄ → ► without lifting); sliding off releases.
 let detachTouch: (() => void) | null = null;
 function wireTouchControls(screen: HTMLElement, game: Game) {
   detachTouch?.(); // drop listeners from a previous game before wiring this one
-  const held = new Map<number, () => void>(); // pointerId -> release fn
-  const bind = (id: string, on: () => void, off: () => void) => {
-    const el = screen.querySelector<HTMLElement>("#" + id);
-    if (!el) return;
-    el.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      el.classList.add("active");
-      on();
-      held.set(e.pointerId, () => { el.classList.remove("active"); off(); });
-    });
+  const pad = screen.querySelector<HTMLElement>(".game-controls")!;
+  const fingers = new Map<number, HTMLElement>(); // pointerId -> button under it
+  const buttonAt = (e: PointerEvent) =>
+    (document.elementFromPoint(e.clientX, e.clientY)?.closest(".ctl-btn") as HTMLElement | null) ?? null;
+  const refresh = () => {
+    const on = new Set(fingers.values());
+    pad.querySelectorAll<HTMLElement>(".ctl-btn").forEach((b) => b.classList.toggle("active", on.has(b)));
   };
-  const lift = (e: PointerEvent) => {
-    const off = held.get(e.pointerId);
-    if (off) { off(); held.delete(e.pointerId); }
+  const point = (e: PointerEvent, btn: HTMLElement | null) => {
+    if (btn === (fingers.get(e.pointerId) ?? null)) return;
+    if (btn) {
+      fingers.set(e.pointerId, btn);
+      game.press("pad:" + e.pointerId, btn.dataset.act as Action);
+      navigator.vibrate?.(8);
+    } else {
+      fingers.delete(e.pointerId);
+      game.release("pad:" + e.pointerId);
+    }
+    refresh();
   };
+  const down = (e: PointerEvent) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>(".ctl-btn");
+    if (!btn) return;
+    e.preventDefault();
+    point(e, btn);
+  };
+  const move = (e: PointerEvent) => { if (fingers.has(e.pointerId)) point(e, buttonAt(e)); };
+  const lift = (e: PointerEvent) => { if (fingers.has(e.pointerId)) point(e, null); };
+  const noMenu = (e: Event) => e.preventDefault(); // long-press menu would cancel the touch
+  pad.addEventListener("pointerdown", down);
+  pad.addEventListener("contextmenu", noMenu);
+  window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", lift);
   window.addEventListener("pointercancel", lift);
   detachTouch = () => {
+    window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", lift);
     window.removeEventListener("pointercancel", lift);
     detachTouch = null;
   };
-  bind("c-up", () => game.setHold(true), () => game.setHold(false));
-  bind("c-down", () => game.setBrake(true), () => game.setBrake(false));
-  bind("c-left", () => game.pressRot(-1), () => game.releaseRot(-1));
-  bind("c-right", () => game.pressRot(1), () => game.releaseRot(1));
 }
 
 // ---------- results ----------

@@ -57,6 +57,8 @@ export interface GameOpts {
 }
 
 const STEP = 1000 / 60; // ms per fixed sim step
+
+export type Action = "hold" | "brake" | "left" | "right";
 const WIPEOUT_RAD = 0.95;
 
 export class Game {
@@ -147,33 +149,73 @@ export class Game {
     this.rider.velocity.y = this.state.vy;
   }
 
+  // Every input source (a key, a finger, the mouse) is tracked separately, so
+  // any combination can be held at once: lifting one finger never cancels
+  // what another is still holding. For tilt, the most recent press wins.
+  private held = new Map<string, Action>();
+
+  press(source: string, action: Action) {
+    this.held.delete(source); // re-insert so this press counts as the newest
+    this.held.set(source, action);
+    this.syncInput();
+  }
+
+  release(source: string) {
+    if (this.held.delete(source)) this.syncInput();
+  }
+
+  private syncInput() {
+    const i = this.input;
+    i.hold = i.brake = false;
+    i.rot = 0;
+    for (const a of this.held.values()) {
+      if (a === "hold") i.hold = true;
+      else if (a === "brake") i.brake = true;
+      else i.rot = a === "left" ? -1 : 1;
+    }
+  }
+
   private attachInput() {
-    const isSpeed = (c: string) => c === "KeyW" || c === "ArrowUp" || c === "Space";
-    const isBrake = (c: string) => c === "KeyS" || c === "ArrowDown";
+    const KEYS: Record<string, Action> = {
+      KeyW: "hold", ArrowUp: "hold", Space: "hold",
+      KeyS: "brake", ArrowDown: "brake",
+      KeyA: "left", ArrowLeft: "left",
+      KeyD: "right", ArrowRight: "right",
+    };
     const down = (e: KeyboardEvent) => {
-      if (isSpeed(e.code)) { this.input.hold = true; e.preventDefault(); }
-      if (isBrake(e.code)) { this.input.brake = true; e.preventDefault(); }
-      if (e.code === "ArrowLeft" || e.code === "KeyA") this.input.rot = -1;
-      if (e.code === "ArrowRight" || e.code === "KeyD") this.input.rot = 1;
-      if (e.code === "KeyP" || e.code === "Escape") this.togglePause();
+      if (e.code === "KeyP" || e.code === "Escape") return this.togglePause();
+      const a = KEYS[e.code];
+      if (!a) return;
+      e.preventDefault();
+      if (!e.repeat) this.press("key:" + e.code, a);
     };
-    const up = (e: KeyboardEvent) => {
-      if (isSpeed(e.code)) this.input.hold = false;
-      if (isBrake(e.code)) this.input.brake = false;
-      if ((e.code === "ArrowLeft" || e.code === "KeyA") && this.input.rot === -1) this.input.rot = 0;
-      if ((e.code === "ArrowRight" || e.code === "KeyD") && this.input.rot === 1) this.input.rot = 0;
+    const up = (e: KeyboardEvent) => this.release("key:" + e.code);
+    // Pressing anywhere on the stage (mouse or finger) also means "speed up".
+    const pd = (e: PointerEvent) => this.press("ptr:" + e.pointerId, "hold");
+    const pu = (e: PointerEvent) => this.release("ptr:" + e.pointerId);
+    // Switching apps or tabs drops every held input (no stuck keys/fingers)
+    // and pauses the run.
+    const clear = () => { this.held.clear(); this.syncInput(); };
+    const hidden = () => {
+      if (!document.hidden) return;
+      clear();
+      if (this.running && !this.finished && !this.armed) this.togglePause();
     };
-    const pd = () => (this.input.hold = true);
-    const pu = () => (this.input.hold = false);
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     this.canvas.addEventListener("pointerdown", pd);
     window.addEventListener("pointerup", pu);
+    window.addEventListener("pointercancel", pu);
+    window.addEventListener("blur", clear);
+    document.addEventListener("visibilitychange", hidden);
     this.detach = () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
       this.canvas.removeEventListener("pointerdown", pd);
       window.removeEventListener("pointerup", pu);
+      window.removeEventListener("pointercancel", pu);
+      window.removeEventListener("blur", clear);
+      document.removeEventListener("visibilitychange", hidden);
     };
   }
 
@@ -192,13 +234,6 @@ export class Game {
       this.loop(this.last);
     } else this.pushHud(true);
   }
-
-  // On-screen touch controls (mobile / tablet) feed the exact same `input` the
-  // keyboard handlers do, so the physics path is identical.
-  setHold(v: boolean) { this.input.hold = v; }
-  setBrake(v: boolean) { this.input.brake = v; }
-  pressRot(dir: -1 | 1) { this.input.rot = dir; }
-  releaseRot(dir: -1 | 1) { if (this.input.rot === dir) this.input.rot = 0; }
 
   // Haptics — a no-op on devices without a vibration motor (most desktops).
   private buzz(pattern: number | number[]) {
