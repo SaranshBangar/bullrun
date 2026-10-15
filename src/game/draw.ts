@@ -1,5 +1,6 @@
 import { drawRider } from "./rider";
 import type { Game } from "./engine";
+import { fmtPrice } from "../shared/series";
 
 const UP = "#16c66a";
 const DOWN = "#ef4b3c";
@@ -33,63 +34,85 @@ export function drawWorld(ctx: CanvasRenderingContext2D, g: Game) {
   parallax(ctx, g, 0.35, "rgba(255,255,255,0.06)", h * 0.62);
   parallax(ctx, g, 0.6, "rgba(255,255,255,0.05)", h * 0.7);
 
-  // ---- terrain (only points near the viewport) ----
-  const pts = g.terrain.pts;
-  ctx.beginPath();
-  let started = false;
+  // ---- terrain (only points near the viewport, extended flat past both ends) ----
+  const t = g.terrain;
   const left = cam.x - 60 / zoom;
   const right = cam.x + (w + 60) / zoom;
-  let firstX = 0;
-  let lastX = 0;
-  for (const p of pts) {
-    if (p.x < left || p.x > right) {
-      if (started && p.x > right) break;
-      continue;
-    }
-    if (!started) {
-      ctx.moveTo(sx(p.x), sy(p.y));
-      firstX = sx(p.x);
-      started = true;
-    } else ctx.lineTo(sx(p.x), sy(p.y));
-    lastX = sx(p.x);
+  const vis: { x: number; y: number }[] = [{ x: left, y: t.heightAt(left) }];
+  for (const p of t.pts) {
+    if (p.x <= left) continue;
+    if (p.x >= right) break;
+    vis.push(p);
   }
+  vis.push({ x: right, y: t.heightAt(right) });
+  const trace = () => {
+    ctx.beginPath();
+    vis.forEach((p, i) => (i ? ctx.lineTo(sx(p.x), sy(p.y)) : ctx.moveTo(sx(p.x), sy(p.y))));
+  };
+
   // fill under the line
-  ctx.save();
-  ctx.lineTo(lastX, h + 40);
-  ctx.lineTo(firstX, h + 40);
+  trace();
+  ctx.lineTo(sx(right), h + 40);
+  ctx.lineTo(sx(left), h + 40);
   ctx.closePath();
   const fill = ctx.createLinearGradient(0, h * 0.35, 0, h);
   fill.addColorStop(0, hexA(line, 0.32));
   fill.addColorStop(1, hexA(line, 0));
   ctx.fillStyle = fill;
   ctx.fill();
+
+  // month gridlines + labels along the bottom, so you always know *when* you are
+  ctx.save();
+  for (const tk of t.ticks) {
+    if (tk.x < left || tk.x > right) continue;
+    const gx = sx(tk.x);
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 5]);
+    ctx.beginPath();
+    ctx.moveTo(gx, sy(t.heightAt(tk.x)) + 8);
+    ctx.lineTo(gx, h - 26);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    tag(ctx, gx, h - 16, tk.label.toUpperCase(), "rgba(13,15,19,0.55)", "#fff");
+  }
   ctx.restore();
 
-  // earnings ramps (glow) — drawn before the stroke so the line sits on top
-  for (const f of g.terrain.features) {
-    if (f.type !== "earnings") continue;
+  // rally ramps (glow + chevrons) and cliff gaps, labelled with the real move
+  for (const f of t.features) {
     if (f.x < left || f.x > right) continue;
-    const gy = g.terrain.heightAt(f.x);
-    const rg = ctx.createRadialGradient(sx(f.x), sy(gy), 0, sx(f.x), sy(gy), 70);
-    rg.addColorStop(0, "rgba(22,198,106,0.55)");
-    rg.addColorStop(1, "rgba(22,198,106,0)");
-    ctx.fillStyle = rg;
-    ctx.fillRect(sx(f.x) - 70, sy(gy) - 90, 140, 120);
+    const gy = t.heightAt(f.x);
+    const c = g.data.closes;
+    const pct = ((c[f.i].close - c[f.i - 1].close) / c[f.i - 1].close) * 100;
+    if (f.type === "rally") {
+      const rg = ctx.createRadialGradient(sx(f.x), sy(gy), 0, sx(f.x), sy(gy), 80 * zoom);
+      rg.addColorStop(0, "rgba(69,212,136,0.7)");
+      rg.addColorStop(1, "rgba(69,212,136,0)");
+      ctx.fillStyle = rg;
+      ctx.fillRect(sx(f.x) - 80 * zoom, sy(gy) - 100 * zoom, 160 * zoom, 140 * zoom);
+      ctx.save();
+      ctx.strokeStyle = "#eafff2";
+      ctx.lineWidth = 3 * zoom;
+      ctx.lineCap = "round";
+      const bob = Math.sin(performance.now() / 220) * 3 * zoom;
+      for (let k = 0; k < 3; k++) {
+        const cy = sy(gy) - (22 + k * 12) * zoom + bob;
+        ctx.globalAlpha = 1 - k * 0.28;
+        ctx.beginPath();
+        ctx.moveTo(sx(f.x) - 9 * zoom, cy + 6 * zoom);
+        ctx.lineTo(sx(f.x), cy);
+        ctx.lineTo(sx(f.x) + 9 * zoom, cy + 6 * zoom);
+        ctx.stroke();
+      }
+      ctx.restore();
+      tag(ctx, sx(f.x), sy(gy) - 78 * zoom, `+${pct.toFixed(1)}% DAY`, "#45d488", "#04140a");
+    } else {
+      tag(ctx, sx(f.x), sy(gy) - 40 * zoom, `${pct.toFixed(1)}% GAP`, "#ef4b3c", "#fff");
+    }
   }
 
   // the line itself — sentiment colour + breathing glow
-  ctx.beginPath();
-  started = false;
-  for (const p of pts) {
-    if (p.x < left || p.x > right) {
-      if (started && p.x > right) break;
-      continue;
-    }
-    if (!started) {
-      ctx.moveTo(sx(p.x), sy(p.y));
-      started = true;
-    } else ctx.lineTo(sx(p.x), sy(p.y));
-  }
+  trace();
   const breathe = 6 + Math.sin(performance.now() / 600) * 3;
   ctx.save();
   ctx.shadowColor = line;
@@ -100,6 +123,22 @@ export function drawWorld(ctx: CanvasRenderingContext2D, g: Game) {
   ctx.lineCap = "round";
   ctx.stroke();
   ctx.restore();
+
+  // six-month high / low markers
+  for (const [i, label] of [[t.hi, "6M HIGH"], [t.lo, "6M LOW"]] as const) {
+    const mx = t.dayX[i];
+    if (mx < left || mx > right) continue;
+    const my = sy(t.heightAt(mx));
+    ctx.beginPath();
+    ctx.arc(sx(mx), my, 6 * zoom, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff";
+    ctx.fill();
+    ctx.lineWidth = 3 * zoom;
+    ctx.strokeStyle = line;
+    ctx.stroke();
+    const below = label === "6M LOW";
+    tag(ctx, sx(mx), my + (below ? 34 : -30) * zoom, `${label} ${fmtPrice(g.data.closes[i].close, g.data.currency)}`, "rgba(13,15,19,0.72)", "#fff");
+  }
 
   // ---- coins ----
   for (const c of g.terrain.coins) {
@@ -153,7 +192,7 @@ export function drawWorld(ctx: CanvasRenderingContext2D, g: Game) {
 }
 
 function parallax(ctx: CanvasRenderingContext2D, g: Game, factor: number, color: string, baseY: number) {
-  const w = g.canvas.clientWidth;
+  const w = g.canvas.clientWidth || g.canvas.width;
   const off = (g.cam.x * factor) % 320;
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -166,6 +205,23 @@ function parallax(ctx: CanvasRenderingContext2D, g: Game, factor: number, color:
   ctx.lineTo(-off, 9999);
   ctx.closePath();
   ctx.fill();
+}
+
+// A small rounded label pill centred on (x, y).
+function tag(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, bg: string, fg: string) {
+  ctx.save();
+  ctx.font = `600 11px 'IBM Plex Mono', monospace`;
+  const tw = ctx.measureText(text).width;
+  const pw = tw + 14;
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.roundRect(x - pw / 2, y - 10, pw, 20, 6);
+  ctx.fill();
+  ctx.fillStyle = fg;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x, y + 0.5);
+  ctx.restore();
 }
 
 function hexA(hex: string, a: number): string {

@@ -32,33 +32,35 @@ export const SECTOR_SKY: Record<Sector, [string, string, string]> = {
 
 const SECTORS = Object.keys(SECTOR_SKY) as Sector[];
 
-// Small hand-curated universe so ticker search + sector themes work offline.
-// Real autocomplete would proxy a symbol-search API; this covers demo + tests.
+// Popular tickers: quick-pick chips, the daily pick, and offline search/sector
+// fallback when the market-data API is unreachable.
 export const UNIVERSE: SeriesMeta[] = [
-  { symbol: "VOLT", name: "Voltaic Energy", sector: "Energy" },
   { symbol: "AAPL", name: "Apple Inc.", sector: "Tech" },
-  { symbol: "NVDA", name: "NVIDIA Corp.", sector: "Tech" },
-  { symbol: "MSFT", name: "Microsoft Corp.", sector: "Tech" },
-  { symbol: "TSLA", name: "Tesla Inc.", sector: "Consumer" },
-  { symbol: "AMZN", name: "Amazon.com Inc.", sector: "Consumer" },
+  { symbol: "NVDA", name: "NVIDIA Corporation", sector: "Tech" },
+  { symbol: "MSFT", name: "Microsoft Corporation", sector: "Tech" },
   { symbol: "GOOGL", name: "Alphabet Inc.", sector: "Tech" },
-  { symbol: "META", name: "Meta Platforms", sector: "Tech" },
-  { symbol: "JPM", name: "JPMorgan Chase", sector: "Finance" },
-  { symbol: "GS", name: "Goldman Sachs", sector: "Finance" },
-  { symbol: "BAC", name: "Bank of America", sector: "Finance" },
-  { symbol: "XOM", name: "Exxon Mobil", sector: "Energy" },
-  { symbol: "CVX", name: "Chevron Corp.", sector: "Energy" },
+  { symbol: "META", name: "Meta Platforms, Inc.", sector: "Tech" },
+  { symbol: "TSLA", name: "Tesla, Inc.", sector: "Consumer" },
+  { symbol: "AMZN", name: "Amazon.com, Inc.", sector: "Consumer" },
+  { symbol: "NFLX", name: "Netflix, Inc.", sector: "Tech" },
+  { symbol: "KO", name: "The Coca-Cola Company", sector: "Consumer" },
+  { symbol: "NKE", name: "NIKE, Inc.", sector: "Consumer" },
+  { symbol: "DIS", name: "The Walt Disney Company", sector: "Consumer" },
+  { symbol: "JPM", name: "JPMorgan Chase & Co.", sector: "Finance" },
+  { symbol: "GS", name: "The Goldman Sachs Group, Inc.", sector: "Finance" },
+  { symbol: "V", name: "Visa Inc.", sector: "Finance" },
+  { symbol: "XOM", name: "Exxon Mobil Corporation", sector: "Energy" },
+  { symbol: "CVX", name: "Chevron Corporation", sector: "Energy" },
   { symbol: "PFE", name: "Pfizer Inc.", sector: "Healthcare" },
   { symbol: "JNJ", name: "Johnson & Johnson", sector: "Healthcare" },
-  { symbol: "UNH", name: "UnitedHealth Group", sector: "Healthcare" },
-  { symbol: "VLDR", name: "Valdera Health", sector: "Healthcare" },
-  { symbol: "VOLY", name: "Volsky Materials", sector: "Industrial" },
+  { symbol: "LLY", name: "Eli Lilly and Company", sector: "Healthcare" },
   { symbol: "CAT", name: "Caterpillar Inc.", sector: "Industrial" },
-  { symbol: "BA", name: "Boeing Co.", sector: "Industrial" },
-  { symbol: "GE", name: "General Electric", sector: "Industrial" },
-  { symbol: "KO", name: "Coca-Cola Co.", sector: "Consumer" },
-  { symbol: "NKE", name: "Nike Inc.", sector: "Consumer" },
-  { symbol: "DIS", name: "Walt Disney Co.", sector: "Consumer" },
+  { symbol: "BA", name: "The Boeing Company", sector: "Industrial" },
+  { symbol: "GE", name: "GE Aerospace", sector: "Industrial" },
+  { symbol: "RELIANCE.NS", name: "Reliance Industries Limited", sector: "Energy" },
+  { symbol: "TCS.NS", name: "Tata Consultancy Services Limited", sector: "Tech" },
+  { symbol: "INFY.NS", name: "Infosys Limited", sector: "Tech" },
+  { symbol: "HDFCBANK.NS", name: "HDFC Bank Limited", sector: "Finance" },
 ];
 
 export function hashStr(s: string): number {
@@ -124,4 +126,16 @@ export function sentiment(closes: Close[]): { netPct: number; up: boolean } {
 // Deterministic "ticker of the day": same symbol for everyone on a given UTC day.
 export function dailyTicker(day: string): string {
   return UNIVERSE[hashStr(day) % UNIVERSE.length].symbol;
+}
+
+export function fmtPrice(n: number, currency = "USD"): string {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: n < 10 ? 3 : 2 }).format(n);
+  } catch {
+    return `${n.toFixed(2)} ${currency}`;
+  }
+}
+
+export function fmtDate(iso: string): string {
+  return new Date(iso + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }

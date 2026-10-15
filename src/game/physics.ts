@@ -41,10 +41,11 @@ export const P = {
   PUMP_DOWN: 2400, // extra pump accel scaled by how steep the downslope is
   BRAKE: 3200,
   DRAG_GROUND: 1.4, // /s exponential speed bleed when upright
-  DRAG_TUCK: 0.3, // tucked = slippery
+  DRAG_TUCK: 0.8, // tucked = slippery
   ROLL_ASSIST: 140, // gentle forward nudge so a near-flat start still rolls
   ROLL_MIN: 120,
-  SMAX: 1750, // top speed clamp
+  SMAX: 1150, // top speed clamp
+  CLIMB_MIN: 200, // holding throttle always crawls up even the steepest real rally
   AIR_ROT: 6.5, // air rotation rad/s
   HEAD_EASE: 12, // how fast the board aligns to the slope on the ground
   LAUNCH_EPS: 2.5, // px slack before we declare the rider airborne
@@ -77,6 +78,7 @@ function groundStep(r: Rider, dt: number, s: Surface, input: Input): StepEvent {
   }
   speed *= Math.max(0, 1 - (input.hold ? P.DRAG_TUCK : P.DRAG_GROUND) * dt);
   if (!input.brake && speed >= 0 && speed < P.ROLL_MIN) speed += P.ROLL_ASSIST * dt;
+  if (input.hold && speed < P.CLIMB_MIN) speed = P.CLIMB_MIN;
   speed = clamp(speed, -P.SMAX, P.SMAX);
 
   const vx = speed * cos;

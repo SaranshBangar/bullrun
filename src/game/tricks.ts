@@ -20,12 +20,12 @@ export interface Jump {
   airtimeMs: number;
   maxHeight: number;
   grabHeldMs: number;
-  launch: "earnings" | "dip" | "normal";
+  launch: "rally" | "dip" | "normal";
 }
 
 export function nameTrick(j: Jump): TrickDef | null {
   if (j.airtimeMs < 320 && j.flips === 0 && j.grabHeldMs < 300) return null; // a hop, not a trick
-  if (j.launch === "earnings" && j.maxHeight > 160) return TRICKS.toTheMoon;
+  if (j.launch === "rally" && j.maxHeight > 160) return TRICKS.toTheMoon;
   if (j.grabHeldMs >= 1000) return TRICKS.diamondHands;
   if (j.launch === "dip" && j.flips >= 1) return TRICKS.shortSqueeze;
   if (j.maxHeight < 90 && j.flips >= 1) return TRICKS.deadCat;

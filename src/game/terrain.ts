@@ -1,88 +1,93 @@
-import { catmullRom, Pt } from "../shared/spline";
+import { catmullRom, type Pt } from "../shared/spline.ts";
 import type { Close } from "../shared/series";
 
 export interface Feature {
-  type: "earnings" | "cliff";
+  type: "rally" | "cliff";
   x: number;
+  i: number; // index of the close this feature belongs to
 }
 export interface Coin {
   x: number;
   y: number;
   taken: boolean;
 }
+export interface Tick {
+  x: number;
+  label: string;
+}
 
 export interface Terrain {
   pts: Pt[];
-  width: number;
-  bottomY: number;
+  dayX: number[]; // world x of each close
   coins: Coin[];
   features: Feature[];
+  ticks: Tick[]; // first trading day of each month
+  hi: number; // index of the highest close
+  lo: number; // index of the lowest close
   startX: number;
   finishX: number;
-  roughness: number;
-  minY: number;
   heightAt(x: number): number;
   slopeAt(x: number): number;
+  indexAt(x: number): number; // nearest close for a world x
 }
 
-const SEG = 90; // world px per trading day
-const AMP = 360; // price-range -> vertical span
+const SEG = 140; // world px per trading day
 const BASE_Y = 560; // world y of the lowest price
 const SAMPLES = 6; // spline subdivisions per day
+const TYPICAL_RISE = Math.tan((25 * Math.PI) / 180) * SEG;
+const GAP = 0.06; // a one-day drop this big becomes a cliff
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// Build the rideable world from daily closes: normalize, smooth with
-// Catmull-Rom, roughen by volatility, then chain Matter segment bodies.
+// Build the rideable world from daily closes. The surface is the real chart,
+// smoothed with Catmull-Rom; only the vertical scale adapts per ticker so a
+// calm stock still has hills and a wild one stays climbable.
 export function buildTerrain(closes: Close[]): Terrain {
   const ys = closes.map((c) => c.close);
   const min = Math.min(...ys);
   const max = Math.max(...ys);
   const span = max - min || 1;
+  const ret = (i: number) => (ys[i] - ys[i - 1]) / ys[i - 1];
 
-  // volatility -> roughness: stdev of daily returns.
-  let mean = 0;
-  const rets: number[] = [];
-  for (let i = 1; i < ys.length; i++) rets.push((ys[i] - ys[i - 1]) / ys[i - 1]);
-  mean = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
-  const variance = rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length || 1);
-  const roughness = Math.min(1, Math.sqrt(variance) * 26);
+  // Vertical scale: a typical big day (90th-percentile move) climbs ~25°.
+  // Rarer, bigger days become steep walls; holding throttle still crawls up
+  // them (physics CLIMB_MIN) and the biggest get rally ramps.
+  const moves = ys.slice(1).map((y, i) => Math.abs(y - ys[i]) / span).sort((a, b) => a - b);
+  const p90 = moves[Math.floor(moves.length * 0.9)] || 0.05;
+  const amp = Math.min(950, Math.max(450, TYPICAL_RISE / p90));
 
-  // control points, with cliffs (big overnight gaps) steepened by pulling x in.
   const ctrl: Pt[] = [];
+  const dayX: number[] = [];
   const features: Feature[] = [];
   let x = SEG;
   for (let i = 0; i < closes.length; i++) {
-    const y = BASE_Y - ((ys[i] - min) / span) * AMP;
-    const gap = i > 0 ? Math.abs(rets[i - 1]) : 0;
-    if (gap > 0.06) {
-      x -= SEG * 0.55; // squeeze x -> a sheer drop/rise
-      features.push({ type: "cliff", x });
+    if (i > 0 && ret(i) < -GAP) {
+      x -= SEG * 0.55; // squeeze x -> a sheer drop
+      features.push({ type: "cliff", x, i });
     }
-    // earnings ~ every quarter (≈63 trading days) -> glowing boost ramp
-    if (i > 0 && i % 63 === 0) features.push({ type: "earnings", x });
-    ctrl.push({ x, y });
+    ctrl.push({ x, y: BASE_Y - ((ys[i] - min) / span) * amp });
+    dayX.push(x);
     x += SEG;
   }
 
-  // smooth, then add volatility-scaled high-freq jitter for rougher hills.
-  let pts = catmullRom(ctrl, SAMPLES);
-  if (roughness > 0.05) {
-    pts = pts.map((p, i) => ({
-      x: p.x,
-      y: p.y + Math.sin(i * 0.7) * roughness * 14 * (i % 3 === 0 ? 1 : 0.4),
-    }));
+  // Rally ramps on the chart's three biggest up-days (≥3%, spaced out). The
+  // pad sits mid-climb into that day's close.
+  const rallies = closes
+    .map((_, i) => i)
+    .filter((i) => i > 2 && i < closes.length - 2 && ret(i) >= 0.03)
+    .sort((a, b) => ret(b) - ret(a));
+  for (const i of rallies) {
+    if (features.filter((f) => f.type === "rally").length >= 3) break;
+    if (features.some((f) => f.type === "rally" && Math.abs(f.i - i) < 10)) continue;
+    features.push({ type: "rally", x: (dayX[i - 1] + dayX[i]) / 2, i });
   }
 
-  const width = ctrl[ctrl.length - 1].x;
-  const minY = Math.min(...pts.map((p) => p.y));
-  const bottomY = BASE_Y + 240;
-
-  const startX = ctrl[0].x + SEG * 0.5;
-  const finishX = ctrl[ctrl.length - 1].x;
+  const pts = catmullRom(ctrl, SAMPLES);
+  const startX = dayX[0] + SEG * 0.5;
+  const finishX = dayX[dayX.length - 1];
 
   const heightAt = (qx: number): number => {
     if (qx <= pts[0].x) return pts[0].y;
     if (qx >= pts[pts.length - 1].x) return pts[pts.length - 1].y;
-    // linear scan is fine at 60fps for ~800 pts near the rider; could bisect.
     let lo = 0;
     let hi = pts.length - 1;
     while (hi - lo > 1) {
@@ -92,33 +97,47 @@ export function buildTerrain(closes: Close[]): Terrain {
     }
     const a = pts[lo];
     const b = pts[hi];
-    const t = (qx - a.x) / (b.x - a.x || 1);
-    return a.y + (b.y - a.y) * t;
+    return a.y + (b.y - a.y) * ((qx - a.x) / (b.x - a.x || 1));
   };
 
-  const slopeAt = (qx: number): number => {
-    const a = heightAt(qx - 6);
-    const b = heightAt(qx + 6);
-    return Math.atan2(b - a, 12);
+  const slopeAt = (qx: number): number => Math.atan2(heightAt(qx + 6) - heightAt(qx - 6), 12);
+
+  const indexAt = (qx: number): number => {
+    let lo = 0;
+    let hi = dayX.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (dayX[mid] < qx) lo = mid;
+      else hi = mid;
+    }
+    return qx - dayX[lo] < dayX[hi] - qx ? lo : hi;
   };
 
-  // scatter dividend coins along the line, lifted above the surface.
+  // dividend coins along the line, lifted above the surface.
   const coins: Coin[] = [];
   for (let cx = startX + SEG; cx < finishX; cx += SEG * 1.7) {
     coins.push({ x: cx, y: heightAt(cx) - 46, taken: false });
   }
 
+  const ticks: Tick[] = [];
+  closes.forEach((c, i) => {
+    if (i > 0 && c.date.slice(5, 7) !== closes[i - 1].date.slice(5, 7)) {
+      ticks.push({ x: dayX[i], label: MONTHS[Number(c.date.slice(5, 7)) - 1] });
+    }
+  });
+
   return {
     pts,
-    width,
-    bottomY,
+    dayX,
     coins,
     features,
+    ticks,
+    hi: ys.indexOf(max),
+    lo: ys.indexOf(min),
     startX,
     finishX,
-    roughness,
-    minY,
     heightAt,
     slopeAt,
+    indexAt,
   };
 }
