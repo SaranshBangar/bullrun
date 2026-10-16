@@ -1,8 +1,9 @@
 import { buildTerrain, Terrain } from "./terrain";
 import { POSES, Pose, lerpPose } from "./rider";
+import { sfx } from "../sfx";
 import { nameTrick, Jump, TrickDef } from "./tricks";
 import { drawWorld } from "./draw";
-import { step, P, normAngle, type Rider, type Input } from "./physics";
+import { step, P, normAngle, bodyPoint, BODY, makeRagdoll, stepRagdoll, J, type Rider, type Input, type Crash, type Ragdoll } from "./physics";
 import type { Close, Sector } from "../shared/series";
 import { SECTOR_SKY } from "../shared/series";
 
@@ -30,6 +31,7 @@ export interface RunResult {
   coins: number;
   bestTrick: string | null;
   path: GhostFrame[];
+  crash?: { reason: Crash; index: number; progress: number }; // set when the run ended in a wipeout
 }
 
 export interface HudState {
@@ -59,7 +61,12 @@ export interface GameOpts {
 const STEP = 1000 / 60; // ms per fixed sim step
 
 export type Action = "hold" | "brake" | "left" | "right";
-const WIPEOUT_RAD = 0.95;
+const CRASH_MS = 1700; // ragdoll tumble before the results screen
+
+export interface Particle {
+  x: number; y: number; vx: number; vy: number;
+  life: number; max: number; size: number; color: string;
+}
 
 export class Game {
   canvas: HTMLCanvasElement;
@@ -91,8 +98,13 @@ export class Game {
   bestTrick: TrickDef | null = null;
   bestTrickScore = 0;
   path: GhostFrame[] = [];
-  wipeUntil = 0;
   settledMs = 0;
+
+  // juice
+  fx: Particle[] = [];
+  trail: { x: number; y: number }[] = [];
+  shake = 0;
+  crash: { reason: Crash; ragdoll: Ragdoll; ms: number; index: number; progress: number } | null = null;
 
   // jump tracking
   inAir = false;
@@ -232,7 +244,10 @@ export class Game {
     if (this.running) {
       this.last = performance.now();
       this.loop(this.last);
-    } else this.pushHud(true);
+    } else {
+      sfx.wind(0, false);
+      this.pushHud(true);
+    }
   }
 
   // Haptics — a no-op on devices without a vibration motor (most desktops).
@@ -258,30 +273,35 @@ export class Game {
 
   private tick(dt: number) {
     if (this.finished) return;
+    this.updateFx(dt);
     // Frozen at the start line until the countdown releases the rider; still
     // ease the camera into frame so the hold doesn't look static.
     if (this.armed) { this.updateCamera(dt); this.pushHud(false); return; }
+    if (this.crash) return this.tickCrash(dt);
 
     if (!this.moving && (this.input.hold || this.state.x > this.terrain.startX + 4)) this.moving = true;
     if (this.moving) this.runMs += dt;
 
-    const wiped = performance.now() < this.wipeUntil;
-    const input: Input = wiped ? { hold: false, brake: true, rot: 0 } : this.input;
     const wasAir = !this.state.grounded;
     const prevX = this.state.x;
+    const impactVy = this.state.vy;
 
-    const ev = step(this.state, dt / 1000, this.terrain, input);
+    const ev = step(this.state, dt / 1000, this.terrain, this.input);
     this.syncRider();
+    if (ev.crash) return this.startCrash(ev.crash, dt);
 
     // Rally ramps (the chart's biggest up-days) pop a grounded rider skyward.
     const ramp = !wasAir && this.state.grounded &&
       this.terrain.features.some((f) => f.type === "rally" && prevX < f.x && this.state.x >= f.x);
     if (ramp) {
       this.state.grounded = false;
+      this.state.spin = 0;
       this.state.vy = Math.min(this.state.vy, 0) - 760;
       this.state.vx = Math.max(this.state.vx, 520) + 140;
       this.syncRider();
       this.onTakeoff("rally");
+      this.burst(this.state.x, this.state.y + 10, 18, "#9ff5c4", 260);
+      sfx.launch();
       this.buzz(30);
     }
 
@@ -301,19 +321,100 @@ export class Game {
 
     if (ev.launched) this.onTakeoff(this.terrain.slopeAt(this.state.x) < -0.15 ? "dip" : "normal");
     if (!this.state.grounded) this.trackAir(dt);
-    if (ev.landed) this.onLand(ev.landDiff ?? 0, ev.slope ?? 0);
+    if (ev.landed) this.onLand(ev.landing === "clean", impactVy);
     if (this.state.grounded && !wasAir) {
       this.settledMs += dt;
       if (this.settledMs > 700) this.mult = 1;
     }
 
-    this.updatePose(dt, wiped);
+    this.updatePose(dt);
+    this.spray();
     this.checkCoins();
     this.checkFinish();
+
+    this.trail.push({ x: this.state.x, y: this.state.y });
+    if (this.trail.length > (this.state.grounded ? 1 : 22)) this.trail.splice(0, this.state.grounded ? 3 : 1);
+    sfx.wind(Math.min(1, Math.hypot(this.state.vx, this.state.vy) / P.SMAX), !this.state.grounded);
 
     this.updateCamera(dt);
     this.recordGhost();
     this.pushHud(false);
+  }
+
+  // Head or body hit the snow (or a landing too far off): the rider becomes a
+  // ragdoll, tumbles for a moment, then the run ends.
+  private startCrash(reason: Crash, dt: number) {
+    const t = this.terrain;
+    this.crash = {
+      reason,
+      ragdoll: makeRagdoll(this.state, dt / 1000),
+      ms: 0,
+      index: t.indexAt(this.state.x),
+      progress: Math.max(0, Math.min(1, (this.state.x - t.dayX[0]) / (t.finishX - t.dayX[0]))),
+    };
+    this.mult = 1;
+    this.shake = 1;
+    this.trail = [];
+    this.inAir = false;
+    const hit = bodyPoint(this.state, reason === "head" ? BODY.head : BODY.hip);
+    this.burst(hit.x, hit.y, 40, "#ffffff", 420);
+    sfx.wind(0, false);
+    sfx.crash();
+    this.buzz([60, 40, 90]);
+  }
+
+  private tickCrash(dt: number) {
+    const c = this.crash!;
+    c.ms += dt;
+    stepRagdoll(c.ragdoll, dt / 1000, this.terrain);
+    const hip = c.ragdoll.pts[J.hip];
+    this.state.x = hip.x;
+    this.state.y = hip.y;
+    this.state.vx = (hip.x - hip.px) / (dt / 1000);
+    this.state.vy = 0;
+    this.state.grounded = true;
+    this.syncRider();
+    this.updateCamera(dt);
+    this.pushHud(false);
+    if (c.ms >= CRASH_MS) this.finish();
+  }
+
+  // Snow kicked up by the board: more at speed, a spray when braking.
+  private spray() {
+    if (!this.state.grounded) return;
+    const sp = Math.hypot(this.state.vx, this.state.vy);
+    const n = (sp / P.SMAX) * (this.input.brake ? 3 : 1.1);
+    for (let i = 0; i < n + (Math.random() < n % 1 ? 1 : 0); i++) {
+      const back = -14 - Math.random() * 10;
+      this.fx.push({
+        x: this.state.x + back * Math.cos(this.state.heading),
+        y: this.state.y + 14 + back * Math.sin(this.state.heading),
+        vx: -this.state.vx * (0.15 + Math.random() * 0.2) + (Math.random() - 0.5) * 60,
+        vy: -80 - Math.random() * 160 - (this.input.brake ? 120 : 0),
+        life: 0, max: 380 + Math.random() * 320, size: 1.6 + Math.random() * 2.6, color: "#ffffff",
+      });
+    }
+  }
+
+  burst(x: number, y: number, n: number, color: string, power: number) {
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI * Math.random();
+      const v = power * (0.3 + Math.random() * 0.7);
+      this.fx.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0, max: 500 + Math.random() * 500, size: 2 + Math.random() * 3, color });
+    }
+  }
+
+  private updateFx(dt: number) {
+    const s = dt / 1000;
+    for (const p of this.fx) {
+      p.life += dt;
+      p.vy += 900 * s;
+      p.vx *= 1 - 1.5 * s;
+      p.x += p.vx * s;
+      p.y += p.vy * s;
+    }
+    this.fx = this.fx.filter((p) => p.life < p.max).slice(-360);
+    this.shake = Math.max(0, this.shake - s * 1.8);
   }
 
   private onTakeoff(ctx: Jump["launch"]) {
@@ -336,45 +437,43 @@ export class Game {
     this.settledMs = 0;
   }
 
-  private onLand(diff: number, slope: number) {
+  private onLand(clean: boolean, impactVy: number) {
     this.inAir = false;
     const airtimeMs = performance.now() - this.airStart;
-
-    if (Math.abs(diff) > WIPEOUT_RAD && airtimeMs > 250) {
-      this.wipeUntil = performance.now() + 900;
-      this.mult = 1;
-      this.state.vx *= 0.2;
-      this.state.vy *= 0.2;
-      this.state.heading = slope;
-      this.syncRider();
-      this.buzz([22, 30, 22]); // wipeout
-      return;
-    }
+    const impact = Math.max(0, impactVy) / 1400;
+    this.burst(this.state.x, this.state.y + 14, Math.round(6 + impact * 30), "#ffffff", 120 + impact * 260);
+    if (impact > 0.7) this.shake = Math.max(this.shake, Math.min(0.6, impact * 0.4));
+    sfx.land(impact);
 
     const jump: Jump = {
-      flips: Math.floor(Math.abs(this.rotAccum) / (Math.PI * 2)),
+      flips: Math.floor(Math.abs(this.rotAccum) / (Math.PI * 2) + 0.15), // a near-full rotation counts
       airtimeMs,
       maxHeight: this.maxHeight,
       grabHeldMs: this.grabMs,
       launch: this.launchCtx,
     };
     const trick = nameTrick(jump);
+    const showClean = clean && airtimeMs > 450;
     if (trick) {
-      const pts = Math.round(trick.base * this.mult);
+      const pts = Math.round(trick.base * this.mult * (clean ? 1.25 : 1));
       this.style += pts;
       this.mult += trick.multAdd;
-      this.opts.onTrick({ name: trick.name, points: pts, mult: this.mult });
+      this.opts.onTrick({ name: trick.name + (clean ? " · Clean" : ""), points: pts, mult: this.mult });
       if (pts > this.bestTrickScore) { this.bestTrickScore = pts; this.bestTrick = trick; }
+      sfx.trick(jump.flips + 1);
       this.buzz(18); // landed trick
+    } else if (showClean) {
+      const pts = Math.round(100 * this.mult);
+      this.style += pts;
+      this.opts.onTrick({ name: "Clean landing", points: pts, mult: this.mult });
+      sfx.clean();
     }
-    this.state.heading = slope;
   }
 
-  private updatePose(dt: number, wiped: boolean) {
+  private updatePose(dt: number) {
     const k = 1 - Math.pow(0.001, dt / 1000);
     let target: Pose;
-    if (wiped) target = POSES.wipeout;
-    else if (!this.state.grounded) target = this.input.hold ? POSES.grab : POSES.air;
+    if (!this.state.grounded) target = this.input.hold ? POSES.grab : POSES.air;
     else if (this.input.hold) target = POSES.tuck;
     else if (this.input.brake) target = POSES.ride;
     else target = POSES.ride;
@@ -383,10 +482,13 @@ export class Game {
 
   private checkCoins() {
     for (const c of this.terrain.coins) {
-      if (!c.taken && Math.hypot(c.x - this.state.x, c.y - this.state.y) < 30) {
+      const body = bodyPoint(this.state, BODY.hip);
+      if (!c.taken && Math.hypot(c.x - body.x, c.y - body.y) < 32) {
         c.taken = true;
         this.coins++;
         this.style += 250;
+        this.burst(c.x, c.y, 8, "#f6d36b", 160);
+        sfx.coin();
         this.buzz(12); // coin
       }
     }
@@ -403,17 +505,22 @@ export class Game {
     cancelAnimationFrame(this.raf);
     this.detach?.();
     window.removeEventListener("resize", this.resize);
+    sfx.wind(0, false);
+    const c = this.crash;
+    if (!c) sfx.finish();
     this.opts.onFinish({
       ticker: this.data.symbol,
-      timeMs: this.moving ? Math.round(this.runMs) : null,
+      timeMs: this.moving && !c ? Math.round(this.runMs) : null,
       style: this.style,
       coins: this.coins,
       bestTrick: this.bestTrick?.name ?? null,
       path: this.path,
+      crash: c ? { reason: c.reason, index: c.index, progress: c.progress } : undefined,
     });
   }
 
   destroy() {
+    sfx.wind(0, false);
     this.running = false;
     cancelAnimationFrame(this.raf);
     this.detach?.();
@@ -434,7 +541,7 @@ export class Game {
     const air = Math.max(0, ground - this.state.y);
     // Pull back as the rider speeds up (and when airborne) to show more mountain.
     const speedFrac = Math.min(1, Math.abs(this.state.vx) / P.SMAX);
-    const scale = Math.min(1.15, Math.max(0.5, h / 720));
+    const scale = Math.min(1.15, Math.max(0.42, Math.min(h / 720, w / 1000))); // portrait: width-limited
     const targetZoom = scale * Math.max(0.5, 1 - air / 1600 - speedFrac * 0.32);
     const k = snap ? 1 : 0.08 * (dt / STEP);
     this.cam.zoom += (targetZoom - this.cam.zoom) * (snap ? 1 : 0.06 * (dt / STEP));

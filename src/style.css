@@ -18,7 +18,7 @@
   --mono: "IBM Plex Mono", monospace;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; }
+html, body { margin: 0; height: 100%; overscroll-behavior: none; }
 body {
   background: var(--bg);
   color: var(--ink);
@@ -108,7 +108,7 @@ button { font-family: var(--grotesk); cursor: pointer; }
    control pad sits below it on black. */
 .game-stage { position: absolute; inset: 0; overflow: hidden; }
 #game-canvas { width: 100%; height: 100%; display: block; }
-.hud { position: absolute; inset: 0; pointer-events: none; }
+.hud { position: absolute; inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); pointer-events: none; }
 
 /* on-screen d-pad (touch only) */
 .game-controls { display: none; }
@@ -147,7 +147,7 @@ button { font-family: var(--grotesk); cursor: pointer; }
 .hud-tr { position: absolute; top: 22px; right: 24px; display: flex; align-items: center; gap: 12px; }
 .hud-tr .timer { font-family: var(--mono); font-size: 26px; font-weight: 500; color: #fff; }
 .hud-tr .timer-box { padding: 10px 16px; }
-.hud-btn { width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.22); background: rgba(13,15,19,0.4); color: #fff; pointer-events: auto; font-size: 16px; touch-action: manipulation; }
+.hud-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.22); background: rgba(13,15,19,0.4); color: #fff; pointer-events: auto; font-size: 16px; touch-action: manipulation; }
 .hud-meters { position: absolute; left: 24px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 14px; }
 .meter { padding: 12px 14px; width: 148px; }
 .meter .lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.7); margin-bottom: 7px; }
@@ -166,7 +166,22 @@ button { font-family: var(--grotesk); cursor: pointer; }
 .toast .mx { font-size: 18px; font-weight: 700; color: var(--gold); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(14px) scale(0.8); } to { opacity: 1; transform: none; } }
 @keyframes toastOut { to { opacity: 0; transform: translateY(-30px) scale(0.9); } }
-.pause-veil { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8,10,14,0.5); font-size: 28px; font-weight: 700; pointer-events: none; }
+.pause-veil { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8,10,14,0.55); backdrop-filter: blur(3px); pointer-events: auto; z-index: 8; }
+.pause-card { display: flex; flex-direction: column; gap: 10px; min-width: 220px; padding: 22px; border-radius: 18px; background: rgba(16,19,26,0.92); border: 1px solid rgba(255,255,255,0.14); }
+.pause-card .btn { justify-content: center; }
+.pause-title { font-size: 24px; font-weight: 700; text-align: center; margin-bottom: 6px; }
+.crash-veil { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, rgba(239,75,60,0) 40%, rgba(239,75,60,0.35) 100%); transition: opacity 0.25s; z-index: 7; }
+.crash-veil.on { opacity: 1; }
+.crash-title { font-size: clamp(40px, 9vw, 84px); font-weight: 700; letter-spacing: -0.03em; color: #fff; text-shadow: 0 8px 40px rgba(0,0,0,0.5); transform: scale(0.8); transition: transform 0.35s cubic-bezier(.34,1.56,.64,1); }
+.crash-veil.on .crash-title { transform: none; }
+.crash-sub { font-family: var(--mono); font-size: 14px; color: #fff; background: rgba(13,15,19,0.55); padding: 6px 12px; border-radius: 8px; }
+.rotate-hint { position: absolute; left: 50%; top: 42%; transform: translateX(-50%); padding: 10px 16px; border-radius: 12px; background: rgba(13,15,19,0.7); color: #fff; font-size: 14px; font-weight: 600; white-space: nowrap; transition: opacity 0.4s; z-index: 6; display: none; }
+.rotate-hint.gone { opacity: 0; }
+@media (orientation: portrait) { .rotate-hint { display: block; } }
+.crash-line { margin: -14px 0 22px; font-size: 15px; color: var(--muted); max-width: 520px; line-height: 1.5; }
+.crash-line b { color: #fff; }
+.kbd-hint { font-size: 11px; padding: 1px 6px; color: var(--on-green); background: rgba(4,20,10,0.12); border-color: rgba(4,20,10,0.25); }
+@media (pointer: coarse) { .kbd-hint { display: none; } }
 
 /* ---------- results ---------- */
 .results { position: absolute; inset: 0; display: flex; background: #10131a; animation: slideUp 0.42s cubic-bezier(.22,1,.36,1); }
@@ -246,15 +261,14 @@ kbd { font-family: var(--mono); font-size: 12px; background: rgba(255, 255, 255,
    on top, pad below on black. Landscape: pad overlaid (see further down).
    ============================================================ */
 @media (pointer: coarse), (max-width: 1024px) {
-  .game-screen { display: flex; flex-direction: column; background: #000; }
-  .game-stage { position: relative; inset: auto; flex: 1 1 auto; min-height: 0; }
+  /* the pad floats over the game so the whole screen is playfield */
   .game-controls {
-    display: flex; align-items: center; justify-content: space-between;
-    flex: 0 0 auto; height: clamp(170px, 32vh, 300px);
-    padding: 16px clamp(16px, 6vw, 52px) calc(16px + env(safe-area-inset-bottom));
-    background: #000; border-top: 1px solid rgba(255, 255, 255, 0.1);
-    touch-action: none;
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+    display: flex; align-items: flex-end; justify-content: space-between;
+    pointer-events: none; touch-action: none;
+    padding: 0 calc(clamp(14px, 4vw, 44px) + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(clamp(14px, 4vw, 44px) + env(safe-area-inset-left));
   }
+  .ctl-btn { background: rgba(13, 15, 19, 0.42); backdrop-filter: blur(6px); }
   .game-screen, .game-stage, #game-canvas { touch-action: none; user-select: none; -webkit-user-select: none; }
 }
 
@@ -314,8 +328,6 @@ kbd { font-family: var(--mono); font-size: 12px; background: rgba(255, 255, 255,
   .results-actions .btn { flex: 1 1 auto; justify-content: center; }
   .hud-meters { display: none; } /* free up space on the smallest stages */
   .ctl-cluster { gap: 14px; }
-  /* minimap moves to a full-width strip above the style counter */
-  .hud-chart { top: auto; bottom: 58px; left: 12px; right: 12px; width: auto; transform: none; height: 44px; }
   .hud-tl { padding: 8px 11px; }
   .hud-tl .price { font-size: 19px; }
   .hud-tl .ex { max-width: 90px; }
@@ -330,17 +342,7 @@ kbd { font-family: var(--mono); font-size: 12px; background: rgba(255, 255, 255,
 /* ----- touch landscape: overlay the d-pad on the canvas instead of a pad below,
    so the game uses the full height. Tilt sits bottom-left, throttle bottom-right. */
 @media (pointer: coarse) and (orientation: landscape), (max-width: 1024px) and (orientation: landscape) {
-  .game-stage { flex: 1 1 auto; } /* fills the screen; controls are absolute */
-  .game-controls {
-    position: absolute; left: 0; right: 0; bottom: 0; top: auto;
-    height: auto; background: transparent; border-top: none; z-index: 6;
-    align-items: flex-end; pointer-events: none;
-    padding: 0 clamp(14px, 4vw, 44px) calc(16px + env(safe-area-inset-bottom));
-  }
-  .ctl-btn {
-    width: clamp(56px, 13vw, 80px); height: clamp(56px, 13vw, 80px);
-    background: rgba(13, 15, 19, 0.45); backdrop-filter: blur(6px);
-  }
+  .ctl-btn { width: clamp(56px, 13vw, 80px); height: clamp(56px, 13vw, 80px); }
   .hud-meters { display: none; } /* keep the landscape view clear behind the pad */
   .hud-combo { bottom: 20px; }
 }
@@ -356,4 +358,11 @@ kbd { font-family: var(--mono); font-size: 12px; background: rgba(255, 255, 255,
   .hud-combo .v { font-size: 15px; }
   .ctl-btn { width: 54px; height: 54px; font-size: 22px; }
   .ctl-cluster { gap: 12px; }
+}
+
+/* portrait touch: HUD strip + style counter move to the top, clear of the pad */
+@media (pointer: coarse) and (orientation: portrait), (max-width: 560px) {
+  .hud-chart { top: 70px; bottom: auto; left: 12px; right: 12px; width: auto; transform: none; height: 40px; }
+  .hud-combo { top: 120px; bottom: auto; }
+  .toasts { top: 42%; }
 }
