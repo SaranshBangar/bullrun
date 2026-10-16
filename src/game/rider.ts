@@ -110,3 +110,36 @@ export function drawRider(
 
   ctx.restore();
 }
+
+// Draws a crashed, tumbling rider from ragdoll joints (world coords mapped to
+// screen by `map`). Joint order matches physics.ts `J`.
+export function drawRagdoll(
+  ctx: CanvasRenderingContext2D,
+  pts: { x: number; y: number }[],
+  map: (p: { x: number; y: number }) => [number, number],
+  scale: number,
+  color = "#fff"
+) {
+  const [head, neck, hip, kneeL, kneeR, footL, footR, handL, handR] = pts.map(map);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const line = (w: number, ...ps: [number, number][]) => {
+    ctx.lineWidth = w * scale;
+    ctx.beginPath();
+    ps.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.stroke();
+  };
+  // board extends past the feet
+  const bx = (footR[0] - footL[0]) * 0.32, by = (footR[1] - footL[1]) * 0.32;
+  line(6, [footL[0] - bx, footL[1] - by], [footR[0] + bx, footR[1] + by]);
+  line(5, footL, kneeL, hip, kneeR, footR);
+  line(5, hip, neck);
+  line(5, handL, neck, handR);
+  ctx.beginPath();
+  ctx.arc(head[0], head[1], 9 * scale, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}

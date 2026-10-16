@@ -1,6 +1,7 @@
 import { api, UnknownSymbol, type Symbol as Sym } from "./api";
 import { Game, type Action, type SeriesData, type RunResult, type GhostFrame } from "./game/engine";
 import { loadBest, recordRun } from "./bests";
+import { unlock as unlockAudio, isMuted, setMuted } from "./sfx";
 import { sectorFor, nameFor, dailyTicker, fmtPrice, fmtDate, SECTOR_SKY, UNIVERSE, type Close } from "./shared/series";
 import { catmullRom, toPath } from "./shared/spline";
 
@@ -224,7 +225,22 @@ function startScreen(initial?: string) {
 }
 
 // ---------- load + play ----------
+const touch = matchMedia("(pointer: coarse)").matches;
+
+// On phones/tablets go fullscreen and lock to landscape where the browser allows
+// (Android Chrome); elsewhere this quietly does nothing. Must run in the tap.
+function immersive() {
+  unlockAudio();
+  if (!touch || document.fullscreenElement || !document.documentElement.requestFullscreen) return;
+  document.documentElement
+    .requestFullscreen({ navigationUI: "hide" })
+    .then(() => (screen.orientation as any)?.lock?.("landscape"))
+    .catch(() => {});
+}
+const leaveImmersive = () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); };
+
 async function loadAndPlay(symbol: string) {
+  immersive();
   app.replaceChildren(h(`<div class="screen loading"><div class="micro">Drawing the mountain…</div></div>`));
   try {
     const data = await api.series(symbol);
@@ -266,8 +282,8 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
           </div>
           <div class="hud-tr">
             <div class="glass timer-box"><div class="timer" id="timer">00:00.000</div></div>
+            <button class="hud-btn" id="mute" aria-label="Sound on/off">${isMuted() ? "🔇" : "🔊"}</button>
             <button class="hud-btn" id="pause" aria-label="Pause">❚❚</button>
-            <button class="hud-btn" id="quit" aria-label="Quit to menu">✕</button>
           </div>
           <div class="hud-meters">
             <div class="glass meter"><div class="lbl">Speed</div><div class="bar"><div class="fill" id="speed" style="width:0%;background:#16c66a"></div></div></div>
@@ -275,7 +291,16 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
           </div>
           <div class="glass hud-combo"><span class="k">Style</span><span class="v" id="style">0</span><span class="m" id="mult">×1.0</span></div>
           <div class="toasts" id="toasts"></div>
-          <div class="pause-veil" id="veil" style="display:none">Paused · P to resume</div>
+          <div class="pause-veil" id="veil" style="display:none">
+            <div class="pause-card">
+              <div class="pause-title">Paused</div>
+              <button class="btn btn-primary" id="resume">Resume</button>
+              <button class="btn btn-ghost" id="restart">Restart</button>
+              <button class="btn btn-ghost" id="quit">Quit to menu</button>
+            </div>
+          </div>
+          <div class="crash-veil" id="crashveil"><div class="crash-title">Wiped out</div><div class="crash-sub" id="crashsub"></div></div>
+          ${touch ? `<div class="rotate-hint" id="rotate">↻ Turn your phone sideways for a wider view</div>` : ""}
         </div>
       </div>
       <div class="game-controls">
@@ -306,6 +331,10 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
       $("speed").style.width = (s.speed * 100).toFixed(0) + "%";
       $("air").style.width = (s.airtime * 100).toFixed(0) + "%";
       $("veil").style.display = s.paused ? "flex" : "none";
+      if (game.crash && !$("crashveil").classList.contains("on")) {
+        $("crashsub").textContent = CRASH_TEXT[game.crash.reason];
+        $("crashveil").classList.add("on");
+      }
       if (s.index === lastIdx) return;
       lastIdx = s.index;
       const c = closes[s.index];
@@ -328,11 +357,31 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
     onFinish: (r) => { detachTouch?.(); resultsScreen(r, data); },
   });
 
-  $("pause").addEventListener("click", () => game.togglePause());
-  $("quit").addEventListener("click", () => { game.destroy(); detachTouch?.(); startScreen(data.symbol); });
+  onTap($("pause"), () => game.togglePause());
+  onTap($("resume"), () => game.togglePause());
+  onTap($("restart"), () => { game.destroy(); detachTouch?.(); loadAndPlay(data.symbol); });
+  onTap($("quit"), () => { game.destroy(); detachTouch?.(); leaveImmersive(); startScreen(data.symbol); });
+  onTap($("mute"), () => { setMuted(!isMuted()); $("mute").textContent = isMuted() ? "🔇" : "🔊"; });
+  const rotate = screen.querySelector<HTMLElement>("#rotate");
+  if (rotate) setTimeout(() => rotate.classList.add("gone"), 4500);
   wireTouchControls(screen, game);
   runCountdown(screen, () => { game.armed = false; });
 }
+
+// In-game buttons act on pointerup instead of click: mobile browsers send no
+// click for a tap made while another finger is down (e.g. still holding ▲).
+function onTap(el: HTMLElement, fn: () => void) {
+  let id: number | null = null;
+  el.addEventListener("pointerdown", (e) => { id = e.pointerId; });
+  el.addEventListener("pointerup", (e) => { if (e.pointerId === id) { id = null; fn(); } });
+  el.addEventListener("click", (e) => { if (e.detail === 0) fn(); }); // keyboard activation
+}
+
+const CRASH_TEXT = {
+  head: "Head first into the snow",
+  body: "Body slam",
+  landing: "Landed sideways — keep the board under you",
+};
 
 // 3·2·1·GO drop-in. The rider is frozen (game.armed) until "GO", which fires
 // `onGo` to release it.
@@ -425,10 +474,11 @@ function resultsScreen(r: RunResult, data: SeriesData) {
   const screen = h(`
     <div class="results">
       <div class="results-main">
-        <div class="micro">Run complete · ${esc(data.symbol)}</div>
-        <h3>${pb.time ? "New personal best!" : "Nice line."}</h3>
+        <div class="micro">${r.crash ? "Wiped out" : "Run complete"} · ${esc(data.symbol)}</div>
+        <h3>${r.crash ? "Margin call!" : pb.time ? "New personal best!" : "Nice line."}</h3>
+        ${r.crash ? `<div class="crash-line">${CRASH_TEXT[r.crash.reason]} on <b>${fmtDate(c[r.crash.index].date)}</b> at <b>${cur(c[r.crash.index].close)}</b> — ${Math.round(r.crash.progress * 100)}% of the way through the chart.</div>` : ""}
         <div class="stat-grid">
-          <div class="stat"><div class="k">Time${pbTag(pb.time)}</div><div class="v">${r.timeMs ? fmtTime(r.timeMs) : "—"}</div></div>
+          <div class="stat"><div class="k">${r.crash ? "Distance" : "Time"}${pbTag(pb.time)}</div><div class="v">${r.crash ? Math.round(r.crash.progress * 100) + "%" : r.timeMs ? fmtTime(r.timeMs) : "—"}</div></div>
           <div class="stat"><div class="k">Style score${pbTag(pb.style)}</div><div class="v">${fmtNum(r.style)}</div></div>
           <div class="stat"><div class="k">Best trick</div><div class="v name">${r.bestTrick ?? "—"}</div></div>
           <div class="stat"><div class="k">Coins</div><div class="v">${r.coins}</div></div>
@@ -436,7 +486,7 @@ function resultsScreen(r: RunResult, data: SeriesData) {
         ${chLine}
         <div class="best-line">Your best on ${esc(data.symbol)}: <b>${pb.best.timeMs ? fmtTime(pb.best.timeMs) : "—"}</b> · <b>${fmtNum(pb.best.style)}</b> style${pb.best.path.length ? " — race your ghost next run" : ""}</div>
         <div class="results-actions">
-          <button class="btn btn-primary" id="retry">Ride again</button>
+          <button class="btn btn-primary" id="retry">${r.crash ? "Try again" : "Ride again"} <kbd class="kbd-hint">↵</kbd></button>
           <button class="btn btn-ghost" id="new">New company</button>
         </div>
       </div>
@@ -449,6 +499,7 @@ function resultsScreen(r: RunResult, data: SeriesData) {
               <path d="${chartPath(c, W, H)}" fill="none" stroke="${color}" stroke-width="3" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
               <circle cx="${xOf(rc.hi)}" cy="${yOf(rc.hi)}" r="6" fill="#fff" stroke="${color}" stroke-width="3" vector-effect="non-scaling-stroke"/>
               <circle cx="${xOf(rc.lo)}" cy="${yOf(rc.lo)}" r="6" fill="#fff" stroke="${color}" stroke-width="3" vector-effect="non-scaling-stroke"/>
+              ${r.crash ? `<path d="M ${xOf(r.crash.index) - 7} ${yOf(r.crash.index) - 7} l 14 14 m 0 -14 l -14 14" stroke="#fff" stroke-width="4" stroke-linecap="round" vector-effect="non-scaling-stroke"/><path d="M ${xOf(r.crash.index) - 7} ${yOf(r.crash.index) - 7} l 14 14 m 0 -14 l -14 14" stroke="#ef4b3c" stroke-width="2.5" stroke-linecap="round" vector-effect="non-scaling-stroke"/>` : ""}
             </svg>
           </div>
           <div class="recap-body">
@@ -478,14 +529,22 @@ function resultsScreen(r: RunResult, data: SeriesData) {
   app.replaceChildren(screen);
 
   screen.querySelector("#retry")!.addEventListener("click", () => loadAndPlay(data.symbol));
-  screen.querySelector("#new")!.addEventListener("click", () => startScreen(data.symbol));
+  screen.querySelector("#new")!.addEventListener("click", () => { leaveImmersive(); startScreen(data.symbol); });
+  // one more run: Enter / R retries straight away
+  const quick = (e: KeyboardEvent) => {
+    if (!screen.isConnected) return document.removeEventListener("keydown", quick);
+    if (e.key === "Enter" || e.key.toLowerCase() === "r") { document.removeEventListener("keydown", quick); loadAndPlay(data.symbol); }
+  };
+  setTimeout(() => document.addEventListener("keydown", quick), 400); // ignore keys still held from the run
 
   // Share: link + text, plus the result card image where the platform takes
   // files (mobile share sheets). The image is pre-rendered now because the
   // share call must happen right inside the click (Safari drops the gesture
   // across slow awaits).
   const link = `${location.origin}/?run=${encodeRun({ s: data.symbol, t: r.timeMs, st: r.style, k: r.bestTrick })}`;
-  const text = `I rode ${data.name} (${data.symbol}) on BullRun in ${r.timeMs ? fmtTime(r.timeMs) : "—"} with ${fmtNum(r.style)} style. Can you beat it?`;
+  const text = r.crash
+    ? `I wiped out ${Math.round(r.crash.progress * 100)}% of the way down ${data.name} (${data.symbol}) on BullRun with ${fmtNum(r.style)} style. Can you make it to the end?`
+    : `I rode ${data.name} (${data.symbol}) on BullRun in ${r.timeMs ? fmtTime(r.timeMs) : "—"} with ${fmtNum(r.style)} style. Can you beat it?`;
   const gif = import("./game/gif");
   let card: File | null = null;
   const cardReady = gif
@@ -548,7 +607,7 @@ function howToModal() {
         <div class="howto-controls">
           <div class="kctl"><span class="keys"><kbd>W</kbd><kbd>↑</kbd></span><span>Speed up — tuck &amp; pump down slopes; release on a peak to launch.</span></div>
           <div class="kctl"><span class="keys"><kbd>S</kbd><kbd>↓</kbd></span><span>Brake — dig in and scrub speed.</span></div>
-          <div class="kctl"><span class="keys"><kbd>A</kbd><kbd>D</kbd> <kbd>←</kbd><kbd>→</kbd></span><span>Rotate in the air — spin flips, but land square or you wipe out.</span></div>
+          <div class="kctl"><span class="keys"><kbd>A</kbd><kbd>D</kbd> <kbd>←</kbd><kbd>→</kbd></span><span>Spin in the air for flips. Let go and your rider lines up for the landing.</span></div>
           <div class="kctl"><span class="keys"><kbd>P</kbd><kbd>Esc</kbd></span><span>Pause.</span></div>
           <div class="kctl"><span class="keys touch">▲ ▼ ◄ ►</span><span>On phones &amp; tablets: the on-screen pad — hold several buttons at once.</span></div>
         </div>
@@ -568,8 +627,9 @@ function howToModal() {
       </div>
 
       <div class="howto-sec">
-        <div class="howto-title">Scoring</div>
-        <p class="howto-note">Tricks — Bull Flip, Short Squeeze, Diamond Hands, Dead Cat Bounce, To The Moon — raise a combo multiplier that resets when you settle or wipe out. Chase your fastest <b>time</b> and highest <b>style</b> per company; bests are saved in this browser.</p>
+        <div class="howto-title">Wipeouts &amp; scoring</div>
+        <p class="howto-note">Keep the board under you. If your <b>head or body hits the snow</b>, or you land more than ~60° off the slope, you wipe out and the run ends right there. Land square for a <b>clean landing</b> bonus and a burst of speed.</p>
+        <p class="howto-note" style="margin-top:10px">Tricks (Bull Flip, Short Squeeze, Diamond Hands, Dead Cat Bounce, To The Moon) build a combo multiplier that resets when you settle. Chase your fastest <b>time</b> and highest <b>style</b> per company; bests are saved in this browser.</p>
       </div>
 
       <button class="btn btn-primary full" id="hgo">Got it — let's ride</button>

@@ -3,7 +3,7 @@
 import assert from "node:assert";
 import { catmullRom } from "../src/shared/spline.ts";
 import { syntheticCloses, sentiment, dailyTicker } from "../src/shared/series.ts";
-import { step, P, type Rider } from "../src/game/physics.ts";
+import { step, P, bodyHit, makeRagdoll, stepRagdoll, type Rider } from "../src/game/physics.ts";
 import { buildTerrain } from "../src/game/terrain.ts";
 
 // catmull-rom passes through its control points
@@ -90,9 +90,44 @@ for (const sym of ["NVDA", "KO", "TSLA"]) {
   const closes = syntheticCloses(sym, 126);
   const t = buildTerrain(closes);
   const rt: Rider = { x: t.startX, y: t.heightAt(t.startX) - P.RIDE_H, vx: 350, vy: 0, heading: 0, grounded: true };
-  for (let i = 0; i < 60 * 120 && rt.x < t.finishX; i++) step(rt, 1 / 60, t, { hold: true, brake: false, rot: 0 });
+  for (let i = 0; i < 60 * 120 && rt.x < t.finishX; i++) {
+    const ev = step(rt, 1 / 60, t, { hold: true, brake: false, rot: 0 });
+    assert(!ev.crash, `hands-off rider never wipes out (${sym})`);
+  }
   assert(rt.x >= t.finishX, "held throttle reaches the finish");
   assert(t.indexAt(t.dayX[5] + 1) === 5 && t.indexAt(t.dayX[6] - 1) === 6 && t.indexAt(t.finishX) === 125, "position maps to the right close");
 }
+
+// crash E: the run ends when the head/body hits the snow or the landing is
+// way off, and a clean landing is recognised as such.
+const flat2 = { heightAt: () => 500, slopeAt: () => 0 };
+const fall = (heading: number, rot = 0, y = 380) => {
+  const r: Rider = { x: 0, y, vx: 300, vy: 0, heading, grounded: false };
+  for (let i = 0; i < 240; i++) {
+    const ev = step(r, 1 / 60, flat2, { hold: false, brake: false, rot });
+    if (ev.crash || ev.landed) return ev;
+  }
+  return {};
+};
+assert(fall(Math.PI, 0, 440).crash === "head", "upside down near the snow: head hits first");
+assert(fall(Math.PI).crash, "falling upside down wipes out");
+assert(fall(Math.PI / 2, 1).crash, "spinning into the ground wipes out");
+assert(fall(0.15).landing === "clean", "near-level landing is clean");
+assert(!bodyHit({ x: 0, y: 500 - P.RIDE_H, vx: 0, vy: 0, heading: 0, grounded: true }, flat2), "standing rider isn't 'hitting' the snow");
+
+// physics F: rising into an up-slope lands on it instead of tunnelling through.
+const wallUp = { heightAt: (x: number) => (x < 100 ? 600 : 600 - (x - 100) * 1.2), slopeAt: (x: number) => (x < 100 ? 0 : Math.atan(-1.2)) };
+const rf: Rider = { x: 50, y: 560, vx: 700, vy: -600, heading: Math.atan(-1.2), grounded: false };
+let under = false;
+for (let i = 0; i < 120 && !rf.grounded; i++) {
+  step(rf, 1 / 60, wallUp, { hold: false, brake: false, rot: 0 });
+  if (rf.y > wallUp.heightAt(rf.x) - P.RIDE_H + 1) under = true;
+}
+assert(rf.grounded && !under, "lands on a wall while rising (no tunnelling)");
+
+// ragdoll G: a crashed body settles on the snow and stays finite.
+const rd = makeRagdoll({ x: 0, y: 300, vx: 600, vy: 200, heading: 2, grounded: false, spin: 4 }, 1 / 60);
+for (let i = 0; i < 240; i++) stepRagdoll(rd, 1 / 60, flat2);
+assert(rd.pts.every((p) => Number.isFinite(p.x) && p.y <= 500), "ragdoll stays above the snow");
 
 console.log("✓ all checks passed");

@@ -1,4 +1,4 @@
-import { drawRider } from "./rider";
+import { drawRider, drawRagdoll } from "./rider";
 import type { Game } from "./engine";
 import { fmtPrice } from "../shared/series";
 
@@ -29,6 +29,13 @@ export function drawWorld(ctx: CanvasRenderingContext2D, g: Game) {
   glow.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, w, h);
+
+  // screen shake (crashes, hard landings) moves the world but not the sky
+  ctx.save();
+  if (g.shake > 0) {
+    const m = g.shake * g.shake * 14;
+    ctx.translate((Math.random() - 0.5) * m, (Math.random() - 0.5) * m);
+  }
 
   // ---- parallax back hills (cheap silhouettes) ----
   parallax(ctx, g, 0.35, "rgba(255,255,255,0.06)", h * 0.62);
@@ -187,8 +194,38 @@ export function drawWorld(ctx: CanvasRenderingContext2D, g: Game) {
     ctx.restore();
   }
 
-  // ---- rider ----
-  drawRider(ctx, sx(g.rider.position.x), sy(g.rider.position.y), g.heading, g.pose, zoom);
+  // ---- air trail: a fading ribbon behind the board ----
+  if (g.trail.length > 2) {
+    ctx.save();
+    ctx.lineCap = "round";
+    for (let i = 1; i < g.trail.length; i++) {
+      const a = g.trail[i - 1], b = g.trail[i];
+      const f = i / g.trail.length;
+      ctx.strokeStyle = `rgba(255,255,255,${(f * 0.45).toFixed(3)})`;
+      ctx.lineWidth = (1 + f * 5) * zoom;
+      ctx.beginPath();
+      ctx.moveTo(sx(a.x), sy(a.y + 12));
+      ctx.lineTo(sx(b.x), sy(b.y + 12));
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ---- rider (or the tumbling ragdoll after a crash) ----
+  if (g.crash) drawRagdoll(ctx, g.crash.ragdoll.pts, (p) => [sx(p.x), sy(p.y)], zoom);
+  else drawRider(ctx, sx(g.rider.position.x), sy(g.rider.position.y), g.heading, g.pose, zoom);
+
+  // ---- particles: snow spray, landing puffs, coin sparkle, crash burst ----
+  for (const p of g.fx) {
+    const k = 1 - p.life / p.max;
+    ctx.globalAlpha = Math.max(0, k * 0.9);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(sx(p.x), sy(p.y), Math.max(0.5, p.size * zoom * (0.6 + k * 0.6)), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore(); // screen shake
 }
 
 function parallax(ctx: CanvasRenderingContext2D, g: Game, factor: number, color: string, baseY: number) {
