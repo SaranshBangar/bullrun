@@ -1,11 +1,11 @@
-// Analytic heightmap rider — the Tiny-Wings / Alto's model. The rider surfs the
+// Analytic heightmap rider - the Tiny-Wings / Alto's model. The rider surfs the
 // smooth Catmull-Rom surface directly instead of colliding a rigid body against
 // faceted terrain (every segment seam would be a fresh micro-collision with
 // residual bounce velocity). Crashes hand the body over to a small Verlet
 // ragdoll that tumbles down the same surface.
 //
 // Pure & frame-rate independent: call step() with a fixed dt in SECONDS. No
-// canvas, no engine deps — so the node self-check can exercise it directly.
+// canvas, no engine deps, so the node self-check can exercise it directly.
 
 export interface Surface {
   heightAt(x: number): number;
@@ -23,9 +23,9 @@ export interface Rider {
 }
 
 export interface Input {
-  hold: boolean; // W / ↑ — pump / tuck for speed
+  hold: boolean; // W / ↑ - pump / tuck for speed
   brake: boolean; // S / ↓
-  rot: number; // -1 / 0 / 1 — A·D / ←·→ spin in the air
+  rot: number; // -1 / 0 / 1, A·D / ←·→ spin in the air
 }
 
 export type Crash = "head" | "body" | "landing";
@@ -150,8 +150,8 @@ function airStep(r: Rider, dt: number, s: Surface, input: Input): StepEvent {
   r.y += r.vy * dt;
 
   // Spin has momentum: it builds while held and bleeds off when released.
-  // Hands off, the rider spots the landing — easing the board toward the
-  // slope they're about to land on — so a plain jump lands itself.
+  // Hands off, the rider spots the landing, easing the board toward the
+  // slope they're about to land on, so a plain jump lands itself.
   let spin = r.spin ?? 0;
   if (input.rot) spin = clamp(spin + input.rot * P.SPIN_ACCEL * dt, -P.SPIN_MAX, P.SPIN_MAX);
   else {
@@ -165,7 +165,7 @@ function airStep(r: Rider, dt: number, s: Surface, input: Input): StepEvent {
   const hit = bodyHit(r, s);
   if (hit) return { crash: hit };
 
-  // Touchdown whenever the board reaches the surface — including while still
+  // Touchdown whenever the board reaches the surface, including while still
   // rising into an up-slope, so the rider can't tunnel through a wall.
   const surf = s.heightAt(r.x) - P.RIDE_H;
   if (r.y >= surf) {

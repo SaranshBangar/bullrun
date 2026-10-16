@@ -6,7 +6,7 @@ const W = 480;
 const H = 270;
 
 function fmt(ms: number | null): string {
-  if (ms == null) return "—";
+  if (ms == null) return "-";
   const m = Math.floor(ms / 60000);
   const s = Math.floor((ms % 60000) / 1000);
   const cs = Math.floor((ms % 1000) / 10);

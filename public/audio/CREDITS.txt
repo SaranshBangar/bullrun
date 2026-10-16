@@ -1,0 +1,16 @@
+BullRun audio credits. Every file here is CC0 (public domain), free to use.
+
+Kenney (www.kenney.nl), Creative Commons CC0
+  Digital Audio pack:   tick (twoTone1), go (phaserUp3), coin (powerUp6),
+                        trick (powerUp2), clean (highUp), launch (phaseJump3)
+  Impact Sounds pack:   land (footstep_snow_000), land-hard (footstep_snow_003),
+                        crash (impactSoft_heavy_001)
+  Interface Sounds pack: click (select_002)
+  Music Jingles pack:   finish (jingles_STEEL06), best (jingles_STEEL02),
+                        fail (jingles_STEEL07)
+
+wipics, CC0 via OpenGameArt
+  music-home: "Calm Loop"  https://opengameart.org/content/calm-loop
+  music-ride: "Menu Music" (3D Sledding)  https://opengameart.org/content/menu-music-1
+
+All files were loudness-normalized and re-encoded to MP3 for the web.

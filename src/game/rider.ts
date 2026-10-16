@@ -1,6 +1,6 @@
 // The jointed stick-man. Pure drawing: a neutral skeleton deformed by three
 // scalars (crouch / extend / splay) then rotated by the board heading. Matches
-// the character sheet — white ink, 5px round stroke, filled head, flexing board.
+// the character sheet - white ink, 5px round stroke, filled head, flexing board.
 
 export interface Pose {
   crouch: number; // 0 ride .. 1 deep tuck

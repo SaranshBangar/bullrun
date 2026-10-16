@@ -40,7 +40,7 @@ export function catmullRom(points: Pt[], samplesPerSeg = 8): Pt[] {
   return out;
 }
 
-// SVG path string from points — used for the static hill preview.
+// SVG path string from points, used for the static hill preview.
 export function toPath(points: Pt[]): string {
   if (!points.length) return "";
   return points

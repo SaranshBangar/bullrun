@@ -13,7 +13,7 @@ landscape). Share a run as a link that challenges a friend to beat your time.
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173 — SPA + API on one origin
+npm run dev      # http://localhost:5173, SPA + API on one origin
 npm run check    # logic self-check (spline, prices, physics, terrain)
 npm run build    # type-check + production build into dist/
 ```
@@ -22,10 +22,10 @@ No API keys, accounts, or database needed.
 
 ## How it plays
 
-- **`W` / `↑`** (or hold **▲**) — speed up: tuck and pump down slopes; holding it
+- **`W` / `↑`** (or hold **▲**) - speed up: tuck and pump down slopes; holding it
   always climbs, even a huge one-day rally. Release on a peak to launch.
-- **`S` / `↓`** (**▼**) — brake.
-- **`A`·`D`** / **`←`·`→`** (**◄ ►**) — spin in the air. Spin has momentum; let go
+- **`S` / `↓`** (**▼**) - brake.
+- **`A`·`D`** / **`←`·`→`** (**◄ ►**) - spin in the air. Spin has momentum; let go
   and the rider spots the landing, lining the board up with the slope below.
 - `P` / `Esc` pauses. On touch screens every button can be held together.
 
@@ -74,6 +74,19 @@ There is no database: nothing needs one.
 
 If the API is unreachable (e.g. Yahoo rate-limits), the game still plays on
 deterministic simulated prices and says so on screen.
+
+## Sound
+
+Recorded sound effects and music live in `public/audio` and play through Web
+Audio (`src/sfx.ts`): menu music on the home screen, a 3-2-1-GO countdown, ride
+music, coins, tricks, snow landings, crash and finish / new-best jingles. Players
+can set Music and Effects loudness (or mute) from the 🔊 button on the home
+screen or the pause menu; the levels are saved in `localStorage`.
+
+All audio is CC0: sound effects and jingles by [Kenney](https://www.kenney.nl),
+music by wipics on OpenGameArt ([Calm Loop](https://opengameart.org/content/calm-loop),
+[Menu Music](https://opengameart.org/content/menu-music-1)). See
+`public/audio/CREDITS.txt` for the file-by-file list.
 
 ## Deploy
 
