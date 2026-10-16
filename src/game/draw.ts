@@ -118,7 +118,7 @@ export function drawWorld(ctx: CanvasRenderingContext2D, g: Game) {
     }
   }
 
-  // the line itself — sentiment colour + breathing glow
+  // the line itself - sentiment colour + breathing glow
   trace();
   const breathe = 6 + Math.sin(performance.now() / 600) * 3;
   ctx.save();

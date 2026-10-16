@@ -1,7 +1,7 @@
 import { api, UnknownSymbol, type Symbol as Sym } from "./api";
 import { Game, type Action, type SeriesData, type RunResult, type GhostFrame } from "./game/engine";
 import { loadBest, recordRun } from "./bests";
-import { unlock as unlockAudio, isMuted, setMuted } from "./sfx";
+import { unlock as unlockAudio, isMuted, setMuted, getVolume, setVolume, music, duck, sfx } from "./sfx";
 import { sectorFor, nameFor, dailyTicker, fmtPrice, fmtDate, SECTOR_SKY, UNIVERSE, type Close } from "./shared/series";
 import { catmullRom, toPath } from "./shared/spline";
 
@@ -54,7 +54,7 @@ if (location.search || location.pathname !== "/") history.replaceState(null, "",
 async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text);
-    snack("Link copied — paste it anywhere.");
+    snack("Link copied, paste it anywhere.");
   } catch {
     window.prompt("Copy this link:", text);
   }
@@ -102,10 +102,13 @@ function startScreen(initial?: string) {
       </svg>
       <div class="nav">
         <div class="logo">BullRun</div>
-        <button class="help-btn" id="help" aria-label="How to play" title="How to play">?</button>
+        <div class="nav-right">
+          <button class="help-btn" id="snd" aria-label="Sound on/off" title="Sound on/off">${isMuted() ? "🔇" : "🔊"}</button>
+          <button class="help-btn" id="help" aria-label="How to play" title="How to play">?</button>
+        </div>
       </div>
       <div class="search-wrap">
-        ${challenge ? `<div class="challenge"><span class="flag">Challenge</span>A friend rode <b>${esc(challenge.s)}</b> in <b>${challenge.t ? fmtTime(challenge.t) : "—"}</b> with <b>${fmtNum(challenge.st)}</b> style. Beat it!</div>` : ""}
+        ${challenge ? `<div class="challenge"><span class="flag">Challenge</span>A friend rode <b>${esc(challenge.s)}</b> in <b>${challenge.t ? fmtTime(challenge.t) : "-"}</b> with <b>${fmtNum(challenge.st)}</b> style. Beat it!</div>` : ""}
         <div class="search-kicker">Pick a company · ride its last 6 months</div>
         <div style="position:relative">
           <div class="search-row">
@@ -129,6 +132,12 @@ function startScreen(initial?: string) {
     </div>`);
   app.replaceChildren(screen);
   screen.querySelector("#help")!.addEventListener("click", howToModal);
+  const snd = screen.querySelector<HTMLElement>("#snd")!;
+  const sndPop = h(`<div class="snd-pop" style="display:none"></div>`);
+  sndPop.appendChild(soundPanel(() => (snd.textContent = isMuted() ? "🔇" : "🔊")));
+  screen.querySelector(".nav")!.appendChild(sndPop);
+  snd.addEventListener("click", () => { sndPop.style.display = sndPop.style.display === "none" ? "block" : "none"; });
+  music("home"); // starts on the first tap/key press if audio isn't unlocked yet
 
   const $ = <T extends HTMLElement = HTMLElement>(sel: string) => screen.querySelector<T>(sel)!;
   const q = $<HTMLInputElement>("#q");
@@ -202,7 +211,10 @@ function startScreen(initial?: string) {
     else if (e.key === "Escape") { ac.style.display = "none"; }
     else if (e.key === "Enter") ride();
   });
-  screen.addEventListener("click", (e) => { if (!screen.querySelector(".search-wrap")!.contains(e.target as Node)) ac.style.display = "none"; });
+  screen.addEventListener("click", (e) => {
+    if (!screen.querySelector(".search-wrap")!.contains(e.target as Node)) ac.style.display = "none";
+    if (!sndPop.contains(e.target as Node) && e.target !== snd) sndPop.style.display = "none";
+  });
 
   // Ride whatever the box says: the highlighted suggestion, an exact match,
   // the current selection, the top suggestion, or the raw ticker typed.
@@ -297,6 +309,7 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
               <button class="btn btn-primary" id="resume">Resume</button>
               <button class="btn btn-ghost" id="restart">Restart</button>
               <button class="btn btn-ghost" id="quit">Quit to menu</button>
+              <div id="pausesnd"></div>
             </div>
           </div>
           <div class="crash-veil" id="crashveil"><div class="crash-title">Wiped out</div><div class="crash-sub" id="crashsub"></div></div>
@@ -331,6 +344,7 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
       $("speed").style.width = (s.speed * 100).toFixed(0) + "%";
       $("air").style.width = (s.airtime * 100).toFixed(0) + "%";
       $("veil").style.display = s.paused ? "flex" : "none";
+      duck(s.paused);
       if (game.crash && !$("crashveil").classList.contains("on")) {
         $("crashsub").textContent = CRASH_TEXT[game.crash.reason];
         $("crashveil").classList.add("on");
@@ -359,13 +373,53 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
 
   onTap($("pause"), () => game.togglePause());
   onTap($("resume"), () => game.togglePause());
-  onTap($("restart"), () => { game.destroy(); detachTouch?.(); loadAndPlay(data.symbol); });
-  onTap($("quit"), () => { game.destroy(); detachTouch?.(); leaveImmersive(); startScreen(data.symbol); });
-  onTap($("mute"), () => { setMuted(!isMuted()); $("mute").textContent = isMuted() ? "🔇" : "🔊"; });
+  onTap($("restart"), () => { game.destroy(); detachTouch?.(); duck(false); loadAndPlay(data.symbol); });
+  onTap($("quit"), () => { game.destroy(); detachTouch?.(); duck(false); leaveImmersive(); startScreen(data.symbol); });
+  const muteIcon = () => ($("mute").textContent = isMuted() ? "🔇" : "🔊");
+  const pausePanel = soundPanel(muteIcon);
+  $("pausesnd").replaceWith(pausePanel);
+  onTap($("mute"), () => { setMuted(!isMuted()); muteIcon(); pausePanel.dispatchEvent(new Event("sync")); });
   const rotate = screen.querySelector<HTMLElement>("#rotate");
   if (rotate) setTimeout(() => rotate.classList.add("gone"), 4500);
   wireTouchControls(screen, game);
   runCountdown(screen, () => { game.armed = false; });
+}
+
+// Music / effects loudness sliders plus a mute switch. Levels are saved on
+// this device (localStorage) by the sound module. Moving a slider unmutes.
+function soundPanel(onMuteChange: () => void): HTMLElement {
+  const el = h(`
+    <div class="snd-panel">
+      <label class="snd-row"><span>Music</span><input type="range" min="0" max="100" data-ch="music" aria-label="Music volume" /><output></output></label>
+      <label class="snd-row"><span>Effects</span><input type="range" min="0" max="100" data-ch="sfx" aria-label="Effects volume" /><output></output></label>
+      <button type="button" class="snd-mute"></button>
+    </div>`);
+  const mute = el.querySelector<HTMLButtonElement>(".snd-mute")!;
+  const sync = () => {
+    mute.textContent = isMuted() ? "🔇 Sound off" : "🔊 Sound on";
+    mute.classList.toggle("off", isMuted());
+    el.classList.toggle("muted", isMuted());
+  };
+  el.querySelectorAll<HTMLInputElement>("input").forEach((input) => {
+    const ch = input.dataset.ch as "music" | "sfx";
+    const out = input.nextElementSibling as HTMLOutputElement;
+    const show = () => {
+      out.textContent = input.value;
+      input.style.setProperty("--fill", input.value + "%");
+    };
+    input.value = String(Math.round(getVolume(ch) * 100));
+    show();
+    input.addEventListener("input", () => {
+      setVolume(ch, +input.value / 100);
+      show();
+      if (isMuted()) { setMuted(false); sync(); onMuteChange(); }
+    });
+    if (ch === "sfx") input.addEventListener("change", () => sfx.coin()); // hear the new level
+  });
+  mute.addEventListener("click", () => { setMuted(!isMuted()); sync(); onMuteChange(); });
+  el.addEventListener("sync", sync);
+  sync();
+  return el;
 }
 
 // In-game buttons act on pointerup instead of click: mobile browsers send no
@@ -380,7 +434,7 @@ function onTap(el: HTMLElement, fn: () => void) {
 const CRASH_TEXT = {
   head: "Head first into the snow",
   body: "Body slam",
-  landing: "Landed sideways — keep the board under you",
+  landing: "Landed sideways, keep the board under you",
 };
 
 // 3·2·1·GO drop-in. The rider is frozen (game.armed) until "GO", which fires
@@ -398,7 +452,8 @@ function runCountdown(screen: HTMLElement, onGo: () => void) {
     num.classList.remove("pop");
     void num.offsetWidth; // restart the pop animation
     num.classList.add("pop");
-    if (seq[i] === "GO") onGo();
+    if (seq[i] === "GO") { onGo(); sfx.go(); music("ride"); }
+    else sfx.tick();
     i++;
     if (i < seq.length) setTimeout(show, 750);
     else setTimeout(() => el.remove(), 550);
@@ -458,6 +513,11 @@ function wireTouchControls(screen: HTMLElement, game: Game) {
 // ---------- results ----------
 function resultsScreen(r: RunResult, data: SeriesData) {
   const pb = recordRun(r);
+  // A crash already played its jingle; otherwise ride music gives way to the
+  // finish (or personal-best) fanfare, then the menu music drifts back in.
+  music(null, 0.4);
+  if (!r.crash) (pb.time ? sfx.best : sfx.finish)();
+  setTimeout(() => { if (screen.isConnected) music("home", 2); }, r.crash ? 1200 : 2200);
   const rc = recap(data.closes);
   const c = data.closes;
   const cur = (n: number) => fmtPrice(n, data.currency);
@@ -469,22 +529,22 @@ function resultsScreen(r: RunResult, data: SeriesData) {
   const [a, b, sk] = SECTOR_SKY[data.sector];
   const pbTag = (on: boolean) => (on ? `<span class="pb">NEW BEST</span>` : "");
   const ch = challenge?.s === data.symbol && challenge.t && r.timeMs ? challenge.t - r.timeMs : null;
-  const chLine = ch == null ? "" : `<div class="best-line ${ch >= 0 ? "won" : "lost"}">Challenge ${fmtTime(challenge!.t!)} — ${ch >= 0 ? `you beat it by ${(ch / 1000).toFixed(2)}s!` : `missed by ${(-ch / 1000).toFixed(2)}s. Again?`}</div>`;
+  const chLine = ch == null ? "" : `<div class="best-line ${ch >= 0 ? "won" : "lost"}">Challenge ${fmtTime(challenge!.t!)} - ${ch >= 0 ? `you beat it by ${(ch / 1000).toFixed(2)}s!` : `missed by ${(-ch / 1000).toFixed(2)}s. Again?`}</div>`;
 
   const screen = h(`
     <div class="results">
       <div class="results-main">
         <div class="micro">${r.crash ? "Wiped out" : "Run complete"} · ${esc(data.symbol)}</div>
         <h3>${r.crash ? "Margin call!" : pb.time ? "New personal best!" : "Nice line."}</h3>
-        ${r.crash ? `<div class="crash-line">${CRASH_TEXT[r.crash.reason]} on <b>${fmtDate(c[r.crash.index].date)}</b> at <b>${cur(c[r.crash.index].close)}</b> — ${Math.round(r.crash.progress * 100)}% of the way through the chart.</div>` : ""}
+        ${r.crash ? `<div class="crash-line">${CRASH_TEXT[r.crash.reason]} on <b>${fmtDate(c[r.crash.index].date)}</b> at <b>${cur(c[r.crash.index].close)}</b>, ${Math.round(r.crash.progress * 100)}% of the way through the chart.</div>` : ""}
         <div class="stat-grid">
-          <div class="stat"><div class="k">${r.crash ? "Distance" : "Time"}${pbTag(pb.time)}</div><div class="v">${r.crash ? Math.round(r.crash.progress * 100) + "%" : r.timeMs ? fmtTime(r.timeMs) : "—"}</div></div>
+          <div class="stat"><div class="k">${r.crash ? "Distance" : "Time"}${pbTag(pb.time)}</div><div class="v">${r.crash ? Math.round(r.crash.progress * 100) + "%" : r.timeMs ? fmtTime(r.timeMs) : "-"}</div></div>
           <div class="stat"><div class="k">Style score${pbTag(pb.style)}</div><div class="v">${fmtNum(r.style)}</div></div>
-          <div class="stat"><div class="k">Best trick</div><div class="v name">${r.bestTrick ?? "—"}</div></div>
+          <div class="stat"><div class="k">Best trick</div><div class="v name">${r.bestTrick ?? "-"}</div></div>
           <div class="stat"><div class="k">Coins</div><div class="v">${r.coins}</div></div>
         </div>
         ${chLine}
-        <div class="best-line">Your best on ${esc(data.symbol)}: <b>${pb.best.timeMs ? fmtTime(pb.best.timeMs) : "—"}</b> · <b>${fmtNum(pb.best.style)}</b> style${pb.best.path.length ? " — race your ghost next run" : ""}</div>
+        <div class="best-line">Your best on ${esc(data.symbol)}: <b>${pb.best.timeMs ? fmtTime(pb.best.timeMs) : "-"}</b> · <b>${fmtNum(pb.best.style)}</b> style${pb.best.path.length ? ", race your ghost next run" : ""}</div>
         <div class="results-actions">
           <button class="btn btn-primary" id="retry">${r.crash ? "Try again" : "Ride again"} <kbd class="kbd-hint">↵</kbd></button>
           <button class="btn btn-ghost" id="new">New company</button>
@@ -544,7 +604,7 @@ function resultsScreen(r: RunResult, data: SeriesData) {
   const link = `${location.origin}/?run=${encodeRun({ s: data.symbol, t: r.timeMs, st: r.style, k: r.bestTrick })}`;
   const text = r.crash
     ? `I wiped out ${Math.round(r.crash.progress * 100)}% of the way down ${data.name} (${data.symbol}) on BullRun with ${fmtNum(r.style)} style. Can you make it to the end?`
-    : `I rode ${data.name} (${data.symbol}) on BullRun in ${r.timeMs ? fmtTime(r.timeMs) : "—"} with ${fmtNum(r.style)} style. Can you beat it?`;
+    : `I rode ${data.name} (${data.symbol}) on BullRun in ${r.timeMs ? fmtTime(r.timeMs) : "-"} with ${fmtNum(r.style)} style. Can you beat it?`;
   const gif = import("./game/gif");
   let card: File | null = null;
   const cardReady = gif
@@ -605,11 +665,11 @@ function howToModal() {
       <div class="howto-sec">
         <div class="howto-title">Controls</div>
         <div class="howto-controls">
-          <div class="kctl"><span class="keys"><kbd>W</kbd><kbd>↑</kbd></span><span>Speed up — tuck &amp; pump down slopes; release on a peak to launch.</span></div>
-          <div class="kctl"><span class="keys"><kbd>S</kbd><kbd>↓</kbd></span><span>Brake — dig in and scrub speed.</span></div>
+          <div class="kctl"><span class="keys"><kbd>W</kbd><kbd>↑</kbd></span><span>Speed up - tuck &amp; pump down slopes; release on a peak to launch.</span></div>
+          <div class="kctl"><span class="keys"><kbd>S</kbd><kbd>↓</kbd></span><span>Brake - dig in and scrub speed.</span></div>
           <div class="kctl"><span class="keys"><kbd>A</kbd><kbd>D</kbd> <kbd>←</kbd><kbd>→</kbd></span><span>Spin in the air for flips. Let go and your rider lines up for the landing.</span></div>
           <div class="kctl"><span class="keys"><kbd>P</kbd><kbd>Esc</kbd></span><span>Pause.</span></div>
-          <div class="kctl"><span class="keys touch">▲ ▼ ◄ ►</span><span>On phones &amp; tablets: the on-screen pad — hold several buttons at once.</span></div>
+          <div class="kctl"><span class="keys touch">▲ ▼ ◄ ►</span><span>On phones &amp; tablets: the on-screen pad, hold several buttons at once.</span></div>
         </div>
       </div>
 
@@ -620,7 +680,7 @@ function howToModal() {
           ${leg(icMap, "Chart map", "The full chart at the top of the screen. The dot is you; the bright part is what you've ridden.")}
           ${leg(icHiLo, "6M high / low", "The highest and lowest close in the window, with the price.")}
           ${leg(icRamp, "Rally ramp", "One of the chart's biggest up-days. Ride over it for a launch into big air.")}
-          ${leg(icCliff, "Gap down", "A day the price fell more than 6% — a sheer cliff. Launch it, then land square.")}
+          ${leg(icCliff, "Gap down", "A day the price fell more than 6%, a sheer cliff. Launch it, then land square.")}
           ${leg(icCoin, "Dividend coin", "Grab it for +250 style.")}
           ${leg(icGhost, "Your ghost", "A replay of your fastest run on this company. Race it.")}
         </div>
@@ -632,7 +692,7 @@ function howToModal() {
         <p class="howto-note" style="margin-top:10px">Tricks (Bull Flip, Short Squeeze, Diamond Hands, Dead Cat Bounce, To The Moon) build a combo multiplier that resets when you settle. Chase your fastest <b>time</b> and highest <b>style</b> per company; bests are saved in this browser.</p>
       </div>
 
-      <button class="btn btn-primary full" id="hgo">Got it — let's ride</button>
+      <button class="btn btn-primary full" id="hgo">Got it, let's ride</button>
     </div>`);
   veil.appendChild(panel);
 
@@ -644,5 +704,10 @@ function howToModal() {
   document.addEventListener("keydown", esc);
   document.body.appendChild(veil);
 }
+
+// UI click for menu buttons (the touch pad and its held buttons stay silent).
+document.addEventListener("click", (e) => {
+  if ((e.target as Element).closest?.("button:not(.ctl-btn), .chip, .ac-item")) sfx.click();
+});
 
 startScreen();

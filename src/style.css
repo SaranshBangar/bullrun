@@ -226,6 +226,23 @@ button { font-family: var(--grotesk); cursor: pointer; }
 /* ---------- how to play ---------- */
 .help-btn { width: 40px; height: 40px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.3); background: rgba(255, 255, 255, 0.14); color: #fff; font-size: 18px; font-weight: 700; font-family: var(--grotesk); line-height: 1; }
 .help-btn:hover { background: rgba(255, 255, 255, 0.24); }
+
+/* ---------- sound settings ---------- */
+.nav { z-index: 6; }
+.snd-pop { position: absolute; top: calc(100% - 12px); right: 34px; width: 260px; padding: 16px; border-radius: 16px; background: rgba(13, 15, 19, 0.94); border: 1px solid rgba(255, 255, 255, 0.14); box-shadow: 0 24px 50px -20px rgba(0, 0, 0, 0.7); animation: sndIn 0.22s cubic-bezier(.22, 1, .36, 1); }
+@keyframes sndIn { from { opacity: 0; transform: translateY(-6px); } }
+.snd-panel { display: flex; flex-direction: column; gap: 10px; }
+.pause-card .snd-panel { margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.snd-row { display: grid; grid-template-columns: 62px 1fr 30px; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+.snd-row output { font-family: var(--mono); font-size: 12px; color: var(--ink); text-align: right; }
+.snd-panel.muted .snd-row { opacity: 0.45; }
+.snd-row input { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; margin: 0; background: transparent; cursor: pointer; touch-action: none; }
+.snd-row input::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--up) var(--fill, 100%), rgba(255, 255, 255, 0.18) var(--fill, 100%)); }
+.snd-row input::-moz-range-track { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--up) var(--fill, 100%), rgba(255, 255, 255, 0.18) var(--fill, 100%)); }
+.snd-row input::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -7px; border-radius: 50%; background: #fff; border: none; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45); }
+.snd-row input::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: #fff; border: none; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45); }
+.snd-mute { align-self: flex-start; padding: 7px 12px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.08); color: var(--ink); font-size: 13px; }
+.snd-mute.off { border-color: rgba(239, 75, 60, 0.6); color: var(--down-soft); }
 .howto { position: relative; width: min(680px, 94vw); max-height: 90vh; overflow-y: auto; background: var(--card); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 20px; padding: 30px 32px; box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.8); animation: lbIn 0.36s cubic-bezier(.22, 1, .36, 1); }
 .howto .x { position: absolute; top: 18px; right: 18px; background: none; border: none; color: var(--faint); font-size: 18px; }
 .howto-head h3 { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin: 6px 0 10px; }
@@ -256,7 +273,7 @@ kbd { font-family: var(--mono); font-size: 12px; background: rgba(255, 255, 255,
 }
 
 /* ============================================================
-   Touch devices (any width — phones, tablets, touch laptops in tablet mode)
+   Touch devices (any width - phones, tablets, touch laptops in tablet mode)
    and narrow windows: show the on-screen d-pad. Portrait: rectangular stage
    on top, pad below on black. Landscape: pad overlaid (see further down).
    ============================================================ */
@@ -273,7 +290,7 @@ kbd { font-family: var(--mono); font-size: 12px; background: rgba(255, 255, 255,
 }
 
 /* ============================================================
-   Responsive — tablet & mobile (<= 1024px): HUD scaled down, other screens
+   Responsive - tablet & mobile (<= 1024px): HUD scaled down, other screens
    reflow to a single column.
    ============================================================ */
 @media (max-width: 1024px) {
@@ -302,6 +319,7 @@ kbd { font-family: var(--mono); font-size: 12px; background: rgba(255, 255, 255,
   .nav { padding: 16px 18px; }
   .logo { font-size: 20px; }
   .nav-right { gap: 10px; }
+  .snd-pop { right: 18px; }
   .start-sun { width: 130px; height: 130px; right: 8%; }
   .search-wrap { width: min(560px, 92%); top: 42%; }
   .search-row { flex-direction: column; gap: 10px; }
@@ -358,6 +376,10 @@ kbd { font-family: var(--mono); font-size: 12px; background: rgba(255, 255, 255,
   .hud-combo .v { font-size: 15px; }
   .ctl-btn { width: 54px; height: 54px; font-size: 22px; }
   .ctl-cluster { gap: 12px; }
+  .pause-card { gap: 7px; padding: 14px 18px; }
+  .pause-title { font-size: 19px; margin-bottom: 0; }
+  .pause-card .btn { padding-top: 8px; padding-bottom: 8px; }
+  .pause-card .snd-panel { margin-top: 2px; padding-top: 8px; gap: 4px; }
 }
 
 /* portrait touch: HUD strip + style counter move to the top, clear of the pad */

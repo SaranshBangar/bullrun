@@ -197,7 +197,7 @@ export class Game {
     const down = (e: KeyboardEvent) => {
       if (e.code === "KeyP" || e.code === "Escape") return this.togglePause();
       const a = KEYS[e.code];
-      if (!a) return;
+      if (!a || (e.target as HTMLElement | null)?.tagName === "INPUT") return; // e.g. a volume slider
       e.preventDefault();
       if (!e.repeat) this.press("key:" + e.code, a);
     };
@@ -242,6 +242,7 @@ export class Game {
     if (this.finished) return;
     this.running = !this.running;
     if (this.running) {
+      (document.activeElement as HTMLElement | null)?.blur?.(); // a pause-menu slider must not keep the arrow keys
       this.last = performance.now();
       this.loop(this.last);
     } else {
@@ -250,7 +251,7 @@ export class Game {
     }
   }
 
-  // Haptics — a no-op on devices without a vibration motor (most desktops).
+  // Haptics - a no-op on devices without a vibration motor (most desktops).
   private buzz(pattern: number | number[]) {
     if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
       navigator.vibrate(pattern);
@@ -507,7 +508,6 @@ export class Game {
     window.removeEventListener("resize", this.resize);
     sfx.wind(0, false);
     const c = this.crash;
-    if (!c) sfx.finish();
     this.opts.onFinish({
       ticker: this.data.symbol,
       timeMs: this.moving && !c ? Math.round(this.runMs) : null,
