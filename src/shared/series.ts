@@ -14,6 +14,14 @@ export interface Close {
   close: number;
 }
 
+// A real headline about the company from around one of its key days.
+export interface NewsItem {
+  date: string; // YYYY-MM-DD the article was published
+  title: string;
+  source: string;
+  url: string;
+}
+
 export interface SeriesMeta {
   symbol: string;
   name: string;
@@ -113,6 +121,19 @@ export function syntheticCloses(symbol: string, n = 130, endDate = new Date()): 
     out.push({ date: d.toISOString().slice(0, 10), close: +price.toFixed(2) });
   }
   return out;
+}
+
+// The chart's biggest one-day moves, at least `gap` trading days apart, in
+// date order. Each one gets a news coin; the API looks up headlines for them.
+export function keyDays(closes: Close[], n = 8, gap = 8): number[] {
+  const ret = (i: number) => Math.abs(closes[i].close / closes[i - 1].close - 1);
+  const out: number[] = [];
+  const cand = closes.map((_, i) => i).filter((i) => i >= 5 && i < closes.length - 3);
+  for (const i of cand.sort((a, b) => ret(b) - ret(a))) {
+    if (out.length >= n) break;
+    if (out.every((j) => Math.abs(j - i) >= gap)) out.push(i);
+  }
+  return out.sort((a, b) => a - b);
 }
 
 export function sentiment(closes: Close[]): { netPct: number; up: boolean } {

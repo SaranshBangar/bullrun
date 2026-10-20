@@ -1,14 +1,16 @@
 import { catmullRom, type Pt } from "../shared/spline.ts";
-import type { Close } from "../shared/series";
+import { keyDays, type Close } from "../shared/series.ts";
 
 export interface Feature {
   type: "rally" | "cliff";
   x: number;
   i: number; // index of the close this feature belongs to
 }
+// A news coin marks one of the chart's biggest moves (close index `i`).
 export interface Coin {
   x: number;
   y: number;
+  i: number;
   taken: boolean;
 }
 export interface Tick {
@@ -113,11 +115,12 @@ export function buildTerrain(closes: Close[]): Terrain {
     return qx - dayX[lo] < dayX[hi] - qx ? lo : hi;
   };
 
-  // dividend coins along the line, lifted above the surface.
-  const coins: Coin[] = [];
-  for (let cx = startX + SEG; cx < finishX; cx += SEG * 1.7) {
-    coins.push({ x: cx, y: heightAt(cx) - 46, taken: false });
-  }
+  // News coins on the key days, hung where the move starts so the rider
+  // meets them going into it (a cliff top, the foot of a rally).
+  const coins: Coin[] = keyDays(closes).map((i) => {
+    const cx = dayX[i] - 0.6 * SEG;
+    return { x: cx, y: heightAt(cx) - 46, i, taken: false };
+  });
 
   const ticks: Tick[] = [];
   closes.forEach((c, i) => {

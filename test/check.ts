@@ -2,8 +2,9 @@
 // (Node strips the TS types; no test framework needed.)
 import assert from "node:assert";
 import { catmullRom } from "../src/shared/spline.ts";
-import { syntheticCloses, sentiment, dailyTicker } from "../src/shared/series.ts";
-import { step, P, bodyHit, makeRagdoll, stepRagdoll, type Rider } from "../src/game/physics.ts";
+import { syntheticCloses, sentiment, dailyTicker, keyDays } from "../src/shared/series.ts";
+import { step, P, bodyHit, bodyPoint, BODY, makeRagdoll, stepRagdoll, type Rider } from "../src/game/physics.ts";
+import { parseRss, pickHeadlines, shortName } from "../api/stock.ts";
 import { buildTerrain } from "../src/game/terrain.ts";
 
 // catmull-rom passes through its control points
@@ -90,12 +91,34 @@ for (const sym of ["NVDA", "KO", "TSLA"]) {
   const closes = syntheticCloses(sym, 126);
   const t = buildTerrain(closes);
   const rt: Rider = { x: t.startX, y: t.heightAt(t.startX) - P.RIDE_H, vx: 350, vy: 0, heading: 0, grounded: true };
+  const grabbed = new Set<number>();
   for (let i = 0; i < 60 * 120 && rt.x < t.finishX; i++) {
     const ev = step(rt, 1 / 60, t, { hold: true, brake: false, rot: 0 });
     assert(!ev.crash, `hands-off rider never wipes out (${sym})`);
+    const hip = bodyPoint(rt, BODY.hip);
+    t.coins.forEach((c) => Math.hypot(c.x - hip.x, c.y - hip.y) < 36 && grabbed.add(c.i));
   }
   assert(rt.x >= t.finishX, "held throttle reaches the finish");
+  assert(t.coins.length === 8 && grabbed.size >= 7, `news coins sit on the riding line (${sym}: ${grabbed.size}/${t.coins.length})`);
   assert(t.indexAt(t.dayX[5] + 1) === 5 && t.indexAt(t.dayX[6] - 1) === 6 && t.indexAt(t.finishX) === 125, "position maps to the right close");
+}
+
+// news coins: the biggest moves, spaced out, in date order.
+{
+  const cl = [100, 101, 102, 103, 104, 112, 113, 114, 115, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116].map((close, i) => ({ date: `d${i}`, close }));
+  const days = keyDays(cl, 8, 3);
+  assert(days.includes(5) && days.includes(9), "picks the +7.7% and -10.4% days");
+  assert(days.every((d, k) => k === 0 || d - days[k - 1] >= 3), "key days are spaced out and sorted");
+}
+assert(shortName("The Coca-Cola Company") === "Coca-Cola" && shortName("Apple Inc.") === "Apple" && shortName("Reliance Industries Limited") === "Reliance Industries", "short company names");
+{
+  const item = (t: string, src: string, day: string) => `<item><title>${t} - ${src}</title><link>https://n.example/${encodeURIComponent(t)}</link><pubDate>${day} 07:00:00 GMT</pubDate><source url="x">${src}</source></item>`;
+  const feed = parseRss(`<rss><channel>${item("Apple &amp; Google&#39;s deal lifts shares", "Reuters", "Fri, 01 May 2026")}${item("Why Apple stock fell today", "CNBC", "Sat, 02 May 2026")}</channel></rss>`);
+  assert(feed.length === 2 && feed[0].title === "Apple & Google's deal lifts shares" && feed[0].source === "Reuters" && feed[0].date === "2026-05-01", "parses Google News RSS");
+  // Same two stories on both days: the down day gets the "fell" story, the up day the other; never the same twice.
+  const picks = pickHeadlines(["2026-05-01", "2026-05-01"], [feed, feed], "Apple Inc.", "AAPL", "-+");
+  assert(picks[0]?.title === "Why Apple stock fell today" && picks[1]?.title === "Apple & Google's deal lifts shares", "headlines match the move and stay unique");
+  assert(pickHeadlines(["2026-05-01"], [[]], "Apple Inc.", "AAPL")[0] === null, "no headline -> null");
 }
 
 // crash E: the run ends when the head/body hits the snow or the landing is

@@ -147,19 +147,32 @@ export function drawWorld(ctx: CanvasRenderingContext2D, g: Game) {
     tag(ctx, sx(mx), my + (below ? 34 : -30) * zoom, `${label} ${fmtPrice(g.data.closes[i].close, g.data.currency)}`, "rgba(13,15,19,0.72)", "#fff");
   }
 
-  // ---- coins ----
+  // ---- news coins: gold disc with the day's move (green up / red down) ----
+  const closes = g.data.closes;
   for (const c of g.terrain.coins) {
     if (c.taken || c.x < left || c.x > right) continue;
+    const up = closes[c.i].close >= closes[c.i - 1].close;
+    const bob = Math.sin(performance.now() / 260 + c.i) * 3 * zoom;
+    const x = sx(c.x), y = sy(c.y) + bob, r = 11 * zoom;
+    ctx.save();
+    ctx.shadowColor = "rgba(246,211,107,0.85)";
+    ctx.shadowBlur = 14 * zoom;
     ctx.beginPath();
-    ctx.arc(sx(c.x), sy(c.y), 7 * zoom, 0, Math.PI * 2);
-    ctx.strokeStyle = "#f6d36b";
-    ctx.lineWidth = 2.5 * zoom;
-    ctx.stroke();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fillStyle = "#f6d36b";
-    ctx.font = `${10 * zoom}px 'IBM Plex Mono', monospace`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("$", sx(c.x), sy(c.y) + 0.5);
+    ctx.fill();
+    ctx.restore();
+    ctx.lineWidth = 2 * zoom;
+    ctx.strokeStyle = "#fff6d6";
+    ctx.stroke();
+    ctx.beginPath(); // arrow
+    const a = 5.5 * zoom, d = up ? -1 : 1;
+    ctx.moveTo(x, y + d * a);
+    ctx.lineTo(x - a, y - d * a * 0.6);
+    ctx.lineTo(x + a, y - d * a * 0.6);
+    ctx.closePath();
+    ctx.fillStyle = up ? "#0f9e52" : "#d63b2d";
+    ctx.fill();
   }
 
   // ---- finish flag ----

@@ -1,5 +1,5 @@
 import type { SeriesData } from "./game/engine";
-import { UNIVERSE, syntheticCloses, sentiment, sectorFor, nameFor, type Sector } from "./shared/series";
+import { UNIVERSE, syntheticCloses, sentiment, sectorFor, nameFor, keyDays, type NewsItem, type Sector } from "./shared/series";
 
 export interface Symbol {
   symbol: string;
@@ -24,6 +24,7 @@ const localSeries = (symbol: string): SeriesData => {
 };
 
 const cache = new Map<string, Promise<SeriesData>>();
+const newsCache = new Map<string, Promise<(NewsItem | null)[]>>();
 
 export const api = {
   search: async (q: string): Promise<Symbol[]> => {
@@ -46,6 +47,26 @@ export const api = {
       p.catch(() => cache.delete(symbol));
     }
     return p;
+  },
+
+  // Headlines for the chart's key days (same order as keyDays), null where
+  // none was found. Empty when offline or the prices are simulated.
+  news: (d: SeriesData): Promise<(NewsItem | null)[]> => {
+    if (d.simulated) return Promise.resolve([]);
+    let p = newsCache.get(d.symbol);
+    if (!p) {
+      const days = keyDays(d.closes);
+      const qs = new URLSearchParams({
+        news: d.symbol,
+        n: d.name,
+        d: days.map((i) => d.closes[i].date).join(","),
+        m: days.map((i) => (d.closes[i].close >= d.closes[i - 1].close ? "+" : "-")).join(""),
+      });
+      p = fetch(`/api/stock?${qs}`).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))));
+      newsCache.set(d.symbol, p);
+      p.catch(() => newsCache.delete(d.symbol));
+    }
+    return p.catch(() => []);
   },
 };
 
