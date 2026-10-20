@@ -29,6 +29,7 @@ export interface RunResult {
   timeMs: number | null;
   style: number;
   coins: number;
+  newsDays: number[]; // close index of every news coin grabbed
   bestTrick: string | null;
   path: GhostFrame[];
   crash?: { reason: Crash; index: number; progress: number }; // set when the run ended in a wipeout
@@ -55,6 +56,7 @@ export interface GameOpts {
   onHud: (h: HudState) => void;
   onTrick: (t: TrickToast) => void;
   onFinish: (r: RunResult) => void;
+  onCoin?: (dayIndex: number) => void; // a news coin was grabbed
   ghost?: GhostFrame[] | null;
 }
 
@@ -484,10 +486,11 @@ export class Game {
   private checkCoins() {
     for (const c of this.terrain.coins) {
       const body = bodyPoint(this.state, BODY.hip);
-      if (!c.taken && Math.hypot(c.x - body.x, c.y - body.y) < 32) {
+      if (!c.taken && Math.hypot(c.x - body.x, c.y - body.y) < 36) {
         c.taken = true;
         this.coins++;
-        this.style += 250;
+        this.style += 500;
+        this.opts.onCoin?.(c.i);
         this.burst(c.x, c.y, 8, "#f6d36b", 160);
         sfx.coin();
         this.buzz(12); // coin
@@ -513,6 +516,7 @@ export class Game {
       timeMs: this.moving && !c ? Math.round(this.runMs) : null,
       style: this.style,
       coins: this.coins,
+      newsDays: this.terrain.coins.filter((c) => c.taken).map((c) => c.i),
       bestTrick: this.bestTrick?.name ?? null,
       path: this.path,
       crash: c ? { reason: c.reason, index: c.index, progress: c.progress } : undefined,

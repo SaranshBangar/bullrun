@@ -2,7 +2,7 @@ import { api, UnknownSymbol, type Symbol as Sym } from "./api";
 import { Game, type Action, type SeriesData, type RunResult, type GhostFrame } from "./game/engine";
 import { loadBest, recordRun } from "./bests";
 import { unlock as unlockAudio, isMuted, setMuted, getVolume, setVolume, music, duck, sfx } from "./sfx";
-import { sectorFor, nameFor, dailyTicker, fmtPrice, fmtDate, SECTOR_SKY, UNIVERSE, type Close } from "./shared/series";
+import { sectorFor, nameFor, dailyTicker, fmtPrice, fmtDate, keyDays, SECTOR_SKY, UNIVERSE, type Close, type NewsItem } from "./shared/series";
 import { catmullRom, toPath } from "./shared/spline";
 
 const app = document.getElementById("app")!;
@@ -83,6 +83,24 @@ function recap(closes: Close[]) {
 }
 
 // ---------- start / search ----------
+// What a news coin says when no headline was found for its day.
+function moveFact(closes: Close[], i: number): string {
+  const ret = (j: number) => closes[j].close / closes[j - 1].close - 1;
+  const all = closes.slice(1).map((_, k) => ret(k + 1));
+  const r = ret(i);
+  if (r === Math.max(...all)) return "Its biggest one-day jump in 6 months";
+  if (r === Math.min(...all)) return "Its worst day in 6 months";
+  return `Shares ${r >= 0 ? "jumped" : "fell"} ${Math.abs(r * 100).toFixed(1)}% in a single day`;
+}
+const dayPct = (closes: Close[], i: number) => (closes[i].close / closes[i - 1].close - 1) * 100;
+// Key-day index -> headline, filled in when the news request lands.
+function headlines(data: SeriesData): Map<number, NewsItem | null> {
+  const map = new Map<number, NewsItem | null>();
+  const days = keyDays(data.closes);
+  api.news(data).then((list) => days.forEach((i, k) => map.set(i, list[k] ?? null)));
+  return map;
+}
+
 function startScreen(initial?: string) {
   const daily = dailyTicker(new Date().toISOString().slice(0, 10));
   const symbolOf = (s: string): Sym => ({ symbol: s, name: nameFor(s), sector: sectorFor(s) });
@@ -167,6 +185,7 @@ function startScreen(initial?: string) {
           const [a2, b2, c2] = SECTOR_SKY[d.sector];
           sky.style.background = `linear-gradient(172deg, ${a2} 0%, ${b2} 56%, ${c2} 100%)`;
         }
+        api.news(d); // warm the headlines while the player decides
         const last = d.closes[d.closes.length - 1];
         quote.innerHTML = `<span><b>${fmtPrice(last.close, d.currency)}</b></span>${pill(d.sentiment.netPct)}<span class="muted">6 months · ${esc(d.exchange || "")} ${fmtDate(d.closes[0].date)} → ${fmtDate(last.date)}</span>${simTag(d)}`;
         const line = chartPath(d.closes, 1280, 340, 30);
@@ -290,6 +309,7 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
               <path d="${mini}" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2" vector-effect="non-scaling-stroke"/>
               <path d="${mini}" fill="none" stroke="${color}" stroke-width="2.5" vector-effect="non-scaling-stroke" clip-path="url(#ridden)"/>
             </svg>
+            ${keyDays(closes).map((i) => `<div class="mini-news ${dayPct(closes, i) >= 0 ? "up" : "down"}" data-i="${i}" style="left:${(i / (closes.length - 1)) * 100}%;top:${mapY(closes[i].close)}%"></div>`).join("")}
             <div class="mini-dot" id="dot" style="border-color:${color}"></div>
           </div>
           <div class="hud-tr">
@@ -303,6 +323,7 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
           </div>
           <div class="glass hud-combo"><span class="k">Style</span><span class="v" id="style">0</span><span class="m" id="mult">×1.0</span></div>
           <div class="toasts" id="toasts"></div>
+          <div class="news-host" id="newshost" aria-live="polite"></div>
           <div class="pause-veil" id="veil" style="display:none">
             <div class="pause-card">
               <div class="pause-title">Paused</div>
@@ -335,6 +356,23 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
   game.armed = true; // hold at the start line for the 3·2·1 countdown
 
   let lastIdx = -1;
+  const heads = headlines(data);
+  let newsTimer = 0;
+  const showNews = (i: number) => {
+    const n = heads.get(i);
+    const card = h(`
+      <div class="newscard">
+        <div class="nc-top"><span class="nc-k">📰 ${fmtDate(closes[i].date)}</span>${pill(dayPct(closes, i))}<span class="nc-pts">+500</span></div>
+        <div class="nc-title"></div>
+        <div class="nc-src"></div>
+      </div>`);
+    card.querySelector(".nc-title")!.textContent = n?.title ?? moveFact(closes, i);
+    card.querySelector(".nc-src")!.textContent = n ? n.source : "Market move";
+    $("newshost").replaceChildren(card);
+    clearTimeout(newsTimer);
+    newsTimer = window.setTimeout(() => card.classList.add("out"), 4200);
+    screen.querySelector(`.mini-news[data-i="${i}"]`)?.classList.add("got");
+  };
   game.start(data, {
     ghost,
     onHud: (s) => {
@@ -368,6 +406,7 @@ function gameScreen(data: SeriesData, ghost: GhostFrame[] | null) {
       while (host.children.length > 3) host.firstElementChild!.remove();
       setTimeout(() => { el.style.animation = "toastOut 0.4s forwards"; setTimeout(() => el.remove(), 400); }, 1200);
     },
+    onCoin: showNews,
     onFinish: (r) => { detachTouch?.(); resultsScreen(r, data); },
   });
 
@@ -541,7 +580,7 @@ function resultsScreen(r: RunResult, data: SeriesData) {
           <div class="stat"><div class="k">${r.crash ? "Distance" : "Time"}${pbTag(pb.time)}</div><div class="v">${r.crash ? Math.round(r.crash.progress * 100) + "%" : r.timeMs ? fmtTime(r.timeMs) : "-"}</div></div>
           <div class="stat"><div class="k">Style score${pbTag(pb.style)}</div><div class="v">${fmtNum(r.style)}</div></div>
           <div class="stat"><div class="k">Best trick</div><div class="v name">${r.bestTrick ?? "-"}</div></div>
-          <div class="stat"><div class="k">Coins</div><div class="v">${r.coins}</div></div>
+          <div class="stat"><div class="k">News coins</div><div class="v">${r.newsDays.length}/${keyDays(c).length}</div></div>
         </div>
         ${chLine}
         <div class="best-line">Your best on ${esc(data.symbol)}: <b>${pb.best.timeMs ? fmtTime(pb.best.timeMs) : "-"}</b> · <b>${fmtNum(pb.best.style)}</b> style${pb.best.path.length ? ", race your ghost next run" : ""}</div>
@@ -549,6 +588,7 @@ function resultsScreen(r: RunResult, data: SeriesData) {
           <button class="btn btn-primary" id="retry">${r.crash ? "Try again" : "Ride again"} <kbd class="kbd-hint">↵</kbd></button>
           <button class="btn btn-ghost" id="new">New company</button>
         </div>
+        <div class="news-list" id="newslist"></div>
       </div>
       <div class="results-share">
         <div class="recap">
@@ -588,6 +628,25 @@ function resultsScreen(r: RunResult, data: SeriesData) {
     </div>`);
   app.replaceChildren(screen);
 
+  // The ride's key days: grabbed coins reveal their headline (a link to the
+  // article), missed ones stay locked until a later run.
+  const fillNews = (heads: (NewsItem | null)[]) => {
+    const got = new Set(r.newsDays);
+    const rows = keyDays(c).map((i, k) => {
+      const n = heads[k] ?? null;
+      const head = `<span class="nl-d">${fmtDate(c[i].date).replace(/, \d{4}$/, "")}</span>${pill(dayPct(c, i))}`;
+      if (!got.has(i)) return h(`<div class="nl-item locked">${head}<span class="nl-t">🔒 Missed this coin, grab it next run</span></div>`);
+      const row = h(n ? `<a class="nl-item" target="_blank" rel="noopener noreferrer">${head}<span class="nl-t"></span><span class="nl-s"></span></a>` : `<div class="nl-item">${head}<span class="nl-t"></span><span class="nl-s">Market move</span></div>`);
+      row.querySelector(".nl-t")!.textContent = n?.title ?? moveFact(c, i);
+      if (n) { row.setAttribute("href", n.url); row.querySelector(".nl-s")!.textContent = n.source; }
+      return row;
+    });
+    const list = screen.querySelector("#newslist")!;
+    list.replaceChildren(h(`<div class="nl-k">The news behind the chart</div>`), ...rows);
+  };
+  fillNews([]);
+  api.news(data).then((list) => { if (screen.isConnected) fillNews(list); });
+
   screen.querySelector("#retry")!.addEventListener("click", () => loadAndPlay(data.symbol));
   screen.querySelector("#new")!.addEventListener("click", () => { leaveImmersive(); startScreen(data.symbol); });
   // one more run: Enter / R retries straight away
@@ -604,7 +663,7 @@ function resultsScreen(r: RunResult, data: SeriesData) {
   const link = `${location.origin}/?run=${encodeRun({ s: data.symbol, t: r.timeMs, st: r.style, k: r.bestTrick })}`;
   const text = r.crash
     ? `I wiped out ${Math.round(r.crash.progress * 100)}% of the way down ${data.name} (${data.symbol}) on BullRun with ${fmtNum(r.style)} style. Can you make it to the end?`
-    : `I rode ${data.name} (${data.symbol}) on BullRun in ${r.timeMs ? fmtTime(r.timeMs) : "-"} with ${fmtNum(r.style)} style. Can you beat it?`;
+    : `I rode ${data.name} (${data.symbol}) on BullRun in ${r.timeMs ? fmtTime(r.timeMs) : "-"} with ${fmtNum(r.style)} style and grabbed ${r.newsDays.length}/${keyDays(c).length} news coins. Can you beat it?`;
   const gif = import("./game/gif");
   let card: File | null = null;
   const cardReady = gif
@@ -645,7 +704,7 @@ function howToModal() {
     `<div class="leg-item"><div class="leg-ic">${icon}</div><div class="leg-txt"><b>${name}</b><span>${desc}</span></div></div>`;
 
   const icLine = `<svg viewBox="0 0 40 40"><path d="M4 29 L13 19 L21 25 L36 9" fill="none" stroke="#16c66a" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  const icCoin = `<svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="11" fill="none" stroke="#f6d36b" stroke-width="3"/><text x="20" y="26" text-anchor="middle" font-family="monospace" font-size="16" fill="#f6d36b">$</text></svg>`;
+  const icCoin = `<svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="12" fill="#f6d36b" stroke="#fff6d6" stroke-width="2"/><path d="M20 13.5 L26 22 L14 22 Z" fill="#0f9e52"/></svg>`;
   const icRamp = `<svg viewBox="0 0 40 40"><defs><radialGradient id="htRamp" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#45d488" stop-opacity="0.85"/><stop offset="1" stop-color="#45d488" stop-opacity="0"/></radialGradient></defs><circle cx="20" cy="22" r="16" fill="url(#htRamp)"/><path d="M13 20 L20 14 L27 20 M13 28 L20 22 L27 28" fill="none" stroke="#eafff2" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   const icCliff = `<svg viewBox="0 0 40 40"><path d="M4 11 L17 11 L17 31 L36 31" fill="none" stroke="#ef4b3c" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   const icHiLo = `<svg viewBox="0 0 40 40"><path d="M4 30 L14 12 L24 26 L36 20" fill="none" stroke="#16c66a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="14" cy="12" r="4.5" fill="#fff" stroke="#16c66a" stroke-width="2.5"/></svg>`;
@@ -681,7 +740,7 @@ function howToModal() {
           ${leg(icHiLo, "6M high / low", "The highest and lowest close in the window, with the price.")}
           ${leg(icRamp, "Rally ramp", "One of the chart's biggest up-days. Ride over it for a launch into big air.")}
           ${leg(icCliff, "Gap down", "A day the price fell more than 6%, a sheer cliff. Launch it, then land square.")}
-          ${leg(icCoin, "Dividend coin", "Grab it for +250 style.")}
+          ${leg(icCoin, "News coin", "Sits on one of the chart's biggest days. Grab it to read the real headline behind the move, +500 style.")}
           ${leg(icGhost, "Your ghost", "A replay of your fastest run on this company. Race it.")}
         </div>
       </div>

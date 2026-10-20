@@ -35,25 +35,32 @@ and price where you fell. Land square for a clean-landing bonus and a speed kick
 
 Rally ramps sit on the chart's biggest up-days and pop you into the air; drops of
 more than 6% in a day are cliffs. Tricks (Bull Flip, Short Squeeze, Diamond
-Hands, Dead Cat Bounce, To The Moon) raise a combo multiplier. Sound (wind,
-coins, tricks, landings, crash) is synthesized with Web Audio; 🔊 toggles it.
+Hands, Dead Cat Bounce, To The Moon) raise a combo multiplier.
+
+**News coins:** eight gold coins sit on the chart's biggest one-day moves (green
+arrow for an up day, red for a down day). Grabbing one shows the real headline
+behind that move for that company, from that day, and the results screen lists
+every key day's story with a link to the article (missed coins stay locked until
+a later run). Headlines come from Google News search; if none is found the coin
+explains the move instead ("Its worst day in 6 months").
 
 ## Architecture
 
 ```
 index.html
-api/stock.ts         Vercel Function: Yahoo Finance chart + symbol search (no key), CDN-cached
+api/stock.ts         Vercel Function: Yahoo Finance chart + symbol search, Google News
+                     headlines for key days (no keys), CDN-cached
 vite.config.ts       mounts api/stock.ts under `vite dev`
 src/
   main.ts            start/search, game HUD + minimap, results recap, share links, how-to
   api.ts             /api/stock client; offline fallback to clearly-labelled simulated prices
   bests.ts           per-ticker personal bests + ghost path in localStorage
-  sfx.ts             synthesized sound effects (Web Audio)
-  shared/series.ts   ticker list, sector palettes, synthetic prices, formatting
+  sfx.ts             sound effects and music (Web Audio, CC0 samples in public/audio)
+  shared/series.ts   ticker list, sector palettes, synthetic prices, key days, formatting
   shared/spline.ts   Catmull-Rom resampling
   game/
     physics.ts       pure rider integrator, body/head collision, crash ragdoll (unit-tested)
-    terrain.ts       closes -> rideable surface, rally ramps, cliffs, month ticks, hi/lo
+    terrain.ts       closes -> rideable surface, rally ramps, cliffs, news coins, month ticks, hi/lo
     engine.ts        game loop, input, scoring, ghost record, camera
     draw.ts          canvas render
     rider.ts         jointed stick-man
